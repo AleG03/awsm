@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"context"
 	"awsm/internal/util"
+	"context"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -10,18 +10,18 @@ import (
 )
 
 var regionCmd = &cobra.Command{
-	Use:   "region",
-	Short: "Manage AWS regions",
+	Use:     "region",
+	Short:   "Manage AWS regions",
 	Aliases: []string{"r"},
 }
 
 var regionListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all available AWS regions",
+	Use:     "list",
+	Short:   "List all available AWS regions",
 	Aliases: []string{"ls"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		util.InfoColor.Println("Fetching available AWS regions...")
-		
+
 		cfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
 			return err
@@ -37,7 +37,7 @@ var regionListCmd = &cobra.Command{
 		for _, region := range output.Regions {
 			data = append(data, []string{*region.RegionName})
 		}
-		
+
 		util.PrintTable([]string{"Region"}, data)
 		return nil
 	},
