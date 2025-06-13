@@ -1,7 +1,5 @@
 name: Release Go Binary
 
-# This workflow runs on pushes to the main branch that include a new tag
-# that looks like a version number (e.g., v1.0.0, v1.2.3).
 on:
   push:
     tags:
@@ -10,25 +8,28 @@ on:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    
+    # --- THIS IS THE FIX ---
+    # Add this permissions block to grant the GITHUB_TOKEN write access
+    # to the repository's contents, which includes creating releases.
+    permissions:
+      contents: write
+    # -----------------------
+    
     steps:
-      # Step 1: Check out your repository code
       - name: Checkout
         uses: actions/checkout@v3
         with:
-          # This is required to fetch all history for the changelog
           fetch-depth: 0
 
-      # Step 2: Set up the Go environment
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.24'
 
-      # Step 3: Run GoReleaser
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
-          # The command to run. 'release' will build and publish.
           distribution: goreleaser
           version: latest
           args: release --clean
