@@ -18,8 +18,7 @@ var (
 	BoldColor    = color.New(color.Bold)
 )
 
-// PrintTable provides a standardized way to print tables to the console.
-// This version is compatible with tablewriter@v0.0.5.
+
 func PrintTable(headers []string, data [][]string) {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader(headers)

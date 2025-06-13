@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> A fast and fancy command-line tool to manage your AWS profiles, sessions, and console access with ease.
+> A fast command-line tool to manage your AWS profiles, sessions, and console access with ease.
 
 `awsm` (AWS Manager) is a standalone binary written in Go that simplifies the tedious process of switching between AWS profiles, handling MFA, assuming roles, and generating console sign-in links. It's a robust and portable replacement for shell function-based helpers.
 
@@ -22,8 +22,8 @@
   - [Features](#features)
   - [Table of Contents](#table-of-contents)
   - [Installation](#installation)
-    - [\[Work In Progess\] Option 1: From Binaries (Recommended)](#work-in-progess-option-1-from-binaries-recommended)
-    - [\[Use this for now\] Option 2: Building from Source](#use-this-for-now-option-2-building-from-source)
+    - [Option 1: From Binaries (Recommended)](#option-1-from-binaries-recommended)
+    - [Option 2: Building from Source](#option-2-building-from-source)
   - [Shell Configuration (Crucial)](#shell-configuration-crucial)
     - [Step 1: Creating the Alias and enable refreshing credentials](#step-1-creating-the-alias-and-enable-refreshing-credentials)
     - [Step 2: Enabling Autocompletion (Recommended)](#step-2-enabling-autocompletion-recommended)
@@ -45,7 +45,7 @@
 
 ## Installation
 
-### [Work In Progess] Option 1: From Binaries (Recommended)
+### Option 1: From Binaries (Recommended)
 
 _Once binaries are available, find them on the [Releases Page](https://github.com/AleG03/awsm/releases)._
 
@@ -58,11 +58,11 @@ _Once binaries are available, find them on the [Releases Page](https://github.co
     ```
 3.  Proceed to the [Shell Configuration](#shell-configuration-crucial) section below.
 
-### [Use this for now] Option 2: Building from Source
+### Option 2: Building from Source
 
-If you have Go (1.18+) installed, you can build `awsm` from source.
+If you have Go (1.24+) installed, you can build `awsm` from source.
 
-1.  [Work in Progress] **Clone the repository:** 
+1.  **Clone the repository:** 
     ```bash
     git clone https://github.com/your-username/awsm.git
     cd awsm
@@ -345,7 +345,7 @@ awsm
 
 Interested in contributing?
 
-1.  Ensure you have Go (1.18+) installed.
+1.  Ensure you have Go (1.24+) installed.
 2.  Clone the repository.
 3.  Dependencies are managed with Go Modules.
 4.  Build the project with `go build .`.

@@ -1,58 +1,50 @@
-# This is your GoReleaser configuration file.
-# It's the "recipe" for building and publishing your project.
 project_name: awsm
 
-# This section tells GoReleaser what to build.
 builds:
-  - # We are defining a single build configuration.
+  - 
     env:
-      # CGO_ENABLED=0 is important for creating truly static binaries.
       - CGO_ENABLED=0
     goos:
       - linux
       - windows
-      - darwin # darwin is the OS name for macOS
+      - darwin
     goarch:
-      - amd64 # For Intel/AMD CPUs
-      - arm64 # For ARM CPUs (like Apple Silicon)
-    # The main entrypoint of your application.
+      - amd64 
+      - arm64 
+
     main: ./main.go
-    # ldflags allow us to inject variables at build time. We'll use this
-    # to embed the version number directly into the binary.
+
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
-# This section defines how to package the built binaries.
+
 archives:
-  - # Create archives in .tar.gz (for Linux/macOS) and .zip (for Windows)
+  - 
     format_overrides:
       - goos: windows
         format: zip
-    # Naming convention for the archive files.
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
-      - LICENSE # Include these files in every archive
+      - LICENSE 
 
-# This generates a checksums.txt file so users can verify their downloads.
+
 checksum:
   name_template: 'checksums.txt'
 
-# This creates a pretty changelog from your commit history.
-# It works best if you use Conventional Commits (e.g., "feat: ...", "fix: ...")
+
 changelog:
   sort: asc
   filters:
-    # Exclude trivial commits from the changelog
+
     exclude:
       - '^docs:'
       - '^test:'
       - 'Merge pull request'
       - 'Merge branch'
 
-# This section controls the creation of the GitHub Release itself.
+
 release:
-  # If set to true, it will automatically create a draft release.
-  # Set to false to publish automatically. Let's start with a draft.
+
   draft: false
   prerelease: auto
