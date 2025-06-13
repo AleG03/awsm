@@ -27,7 +27,7 @@ automatically opens it in your default browser.
 Make sure to set a session first with 'acp <profile-name>'.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// ... (the internal logic of the command remains the same)
+
 		util.InfoColor.Fprintln(os.Stderr, "Getting current credentials...")
 		awsCfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
@@ -88,7 +88,7 @@ Make sure to set a session first with 'acp <profile-name>'.`,
 		destination := fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
 		loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
 
-		// The logic is now inverted. It opens by default.
+
 		if dontOpenBrowser {
 			util.SuccessColor.Fprintln(os.Stderr, "✔ Console URL generated successfully!")
 			fmt.Println(loginURL)
@@ -107,7 +107,6 @@ Make sure to set a session first with 'acp <profile-name>'.`,
 }
 
 func init() {
-	// Flag is changed to `--no-open`
 	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Only print the URL, do not open in a browser")
 	rootCmd.AddCommand(consoleCmd)
 }

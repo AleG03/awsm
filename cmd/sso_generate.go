@@ -56,7 +56,6 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 		util.SuccessColor.Println("✔ Found access token.")
 
 		// 3. Create a basic AWS config with just the region specified.
-		// The SSO client will use our manually provided access token.
 		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(awsRegion))
 		if err != nil {
 			return fmt.Errorf("could not create basic AWS config: %w", err)
@@ -67,7 +66,7 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 		util.InfoColor.Println("Fetching all accessible accounts...")
 		var accounts []*sso.ListAccountsOutput
 		accountsPaginator := sso.NewListAccountsPaginator(ssoClient, &sso.ListAccountsInput{
-			AccessToken: &accessToken, // This is the crucial fix
+			AccessToken: &accessToken,
 		})
 		for accountsPaginator.HasMorePages() {
 			page, err := accountsPaginator.NextPage(context.TODO())
@@ -135,8 +134,7 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 	},
 }
 
-// findLatestSsoToken scans the AWS SSO cache directory, finds the most
-// recently modified JSON file, and extracts the accessToken from it.
+
 func findLatestSsoToken(cacheDir string) (string, error) {
 	files, err := os.ReadDir(cacheDir)
 	if err != nil {
@@ -152,7 +150,7 @@ func findLatestSsoToken(cacheDir string) (string, error) {
 		}
 		info, err := file.Info()
 		if err != nil {
-			continue // Skip files we can't get info for
+			continue
 		}
 		if info.ModTime().After(latestTime) {
 			latestTime = info.ModTime()

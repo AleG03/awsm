@@ -1,28 +1,36 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+name: Release Go Binary
 
-name: Go
-
+# This workflow runs on pushes to the main branch that include a new tag
+# that looks like a version number (e.g., v1.0.0, v1.2.3).
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    tags:
+      - 'v*.*.*'
 
 jobs:
-
-  build:
+  goreleaser:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      # Step 1: Check out your repository code
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          # This is required to fetch all history for the changelog
+          fetch-depth: 0
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.24'
+      # Step 2: Set up the Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
 
-    - name: Build
-      run: go build -v ./...
-
-    - name: Test
-      run: go test -v ./...
+      # Step 3: Run GoReleaser
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          # The command to run. 'release' will build and publish.
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	// "fmt" has been removed
+
 	"awsm/internal/aws"
 	"awsm/internal/util"
 

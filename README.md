@@ -1,6 +1,5 @@
 # `awsm` - The AWS Manager
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/AleG03/awsm)](https://goreportcard.com/report/github.com/AleG03/awsm)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > A fast and fancy command-line tool to manage your AWS profiles, sessions, and console access with ease.
@@ -48,7 +47,7 @@
 
 ### [Work In Progess] Option 1: From Binaries (Recommended)
 
-_Once binaries are available, find them on the [Releases Page](https://github.com/your-username/awsm/releases)._
+_Once binaries are available, find them on the [Releases Page](https://github.com/AleG03/awsm/releases)._
 
 1.  Download the appropriate binary for your operating system and architecture.
 2.  Move the binary to a directory in your `PATH`.

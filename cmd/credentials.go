@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os" // <-- Import the 'os' package
+	"os"
 
 	"awsm/internal/aws"
 	"awsm/internal/util"
@@ -34,7 +34,7 @@ func getCredentialsForProfile(profileName string) (creds *aws.Credentials, isSta
 
 	// Check for IAM Role/MFA profile
 	if section.HasKey("role_arn") || section.HasKey("mfa_serial") {
-		// CORRECTED: Print to Stderr
+
 		util.InfoColor.Fprintln(os.Stderr, "IAM profile detected. Using STS to get credentials...")
 		tempCreds, err := aws.GetTemporaryCredentials(profileName)
 		if err != nil {
@@ -49,7 +49,6 @@ func getCredentialsForProfile(profileName string) (creds *aws.Credentials, isSta
 
 	// Check for SSO profile
 	if section.HasKey("sso_session") {
-		// CORRECTED: Print to Stderr
 		util.InfoColor.Fprintln(os.Stderr, "SSO profile detected. Using cached session to get credentials...")
 		awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(), awsconfig.WithSharedConfigProfile(profileName))
 		if err != nil {
@@ -66,8 +65,7 @@ func getCredentialsForProfile(profileName string) (creds *aws.Credentials, isSta
 		}, false, nil
 	}
 
-	// If neither of the above, it's a static profile.
-	// CORRECTED: Print to Stderr
+
 	util.WarnColor.Fprintf(os.Stderr, "Profile '%s' appears to use static credentials.\n", profileName)
 	return nil, true, nil
 }

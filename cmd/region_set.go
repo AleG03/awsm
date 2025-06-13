@@ -20,9 +20,7 @@ Example:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		region := args[0]
 		// In a future version, we could validate this is a real AWS region.
-		// For now, we'll trust the user.
 
-		// Print export commands to stdout for `eval` to capture
 		fmt.Printf("export AWS_REGION='%s';\n", region)
 		fmt.Printf("export AWS_DEFAULT_REGION='%s';\n", region)
 

@@ -53,7 +53,7 @@ This is the equivalent of 'aws sso login --sso-session ...'.`,
 		util.InfoColor.Printf("Attempting SSO login for session: %s\n", util.BoldColor.Sprint(ssoSession))
 		util.InfoColor.Println("Your browser should open. Please follow the instructions.")
 
-		// We shell out to the aws cli because it handles the complex device flow
+
 		awsCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
 		awsCmd.Stdin = os.Stdin
 		awsCmd.Stdout = os.Stdout
