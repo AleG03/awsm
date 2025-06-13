@@ -9,9 +9,6 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     
-    # --- THIS IS THE FIX ---
-    # Add this permissions block to grant the GITHUB_TOKEN write access
-    # to the repository's contents, which includes creating releases.
     permissions:
       contents: write
     # -----------------------
