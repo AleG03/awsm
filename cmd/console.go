@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"os"
 
-	"awsm/internal/browser" // Import our new browser package
+	"awsm/internal/browser"
 	"awsm/internal/util"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -27,7 +27,7 @@ automatically opens it in your default browser or a specified Chrome profile.
 Make sure to set a session first with 'awsmp <profile-name>'.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// This first part of the logic to generate the URL remains unchanged.
+
 		util.InfoColor.Fprintln(os.Stderr, "Getting current credentials...")
 		awsCfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
@@ -75,13 +75,13 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 		destination := fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
 		loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
 
-		// This is the updated section for opening the browser.
+
 		if dontOpenBrowser {
 			util.SuccessColor.Fprintln(os.Stderr, "✔ Console URL generated successfully!")
 			fmt.Println(loginURL)
 		} else {
 			util.InfoColor.Fprintln(os.Stderr, "Opening AWS Console...")
-			// Use our new smart browser opener, passing in the global flag value.
+
 			if err := browser.OpenURL(loginURL, chromeProfile); err != nil {
 				util.ErrorColor.Fprintf(os.Stderr, "Could not open browser automatically. Please copy this URL:\n")
 				fmt.Println(loginURL)

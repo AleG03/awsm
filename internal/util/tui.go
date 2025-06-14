@@ -30,9 +30,9 @@ func PrintTable(headers []string, data [][]string) {
 	table.SetRowSeparator("")
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
-	table.SetTablePadding("  ") // Add some padding for readability
+	table.SetTablePadding("  ")
 	table.SetNoWhiteSpace(true)
-	table.AppendBulk(data) // Append all rows at once
+	table.AppendBulk(data)
 	table.Render()
 }
 

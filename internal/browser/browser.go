@@ -1,7 +1,7 @@
 package browser
 
 import (
-	"awsm/internal/config" // Import our new config package
+	"awsm/internal/config"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -9,7 +9,7 @@ import (
 	"github.com/pkg/browser"
 )
 
-// OpenURL smartly opens a URL. It now resolves Chrome profile aliases.
+
 // It takes the friendly alias name as input.
 func OpenURL(url, chromeProfileAlias string) error {
 	// If no profile is requested, use the default simple method.
@@ -28,7 +28,7 @@ func OpenURL(url, chromeProfileAlias string) error {
 	case "darwin": // macOS
 		cmd = exec.Command("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", profileArg, url)
 	case "windows":
-		// Note: The exact path might vary. This is the most common one.
+
 		cmd = exec.Command("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", profileArg, url)
 	case "linux":
 		// Assumes 'google-chrome' is in the user's PATH
@@ -39,8 +39,5 @@ func OpenURL(url, chromeProfileAlias string) error {
 		return browser.OpenURL(url)
 	}
 
-	// Use .Start() instead of .Run() or .Output().
-	// This launches the process and immediately detaches, so our CLI doesn't
-	// block waiting for the browser to be closed.
 	return cmd.Start()
 }

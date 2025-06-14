@@ -85,7 +85,6 @@ func GetSsoSessionForProfile(profileName string) (string, error) {
 		}
 	}
 
-	// --- THIS IS THE CORRECTED LOGIC ---
 	// Get the value of the key directly. If the key doesn't exist, this returns an empty string.
 	ssoSessionValue := section.Key("sso_session").String()
 

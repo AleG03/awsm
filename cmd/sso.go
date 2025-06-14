@@ -44,7 +44,6 @@ var ssoLoginCmd = &cobra.Command{
 	},
 }
 
-// (The sso generate command can be added here if you keep it)
 
 func init() {
 	ssoCmd.AddCommand(ssoLoginCmd)

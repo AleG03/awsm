@@ -81,7 +81,6 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 }
 
 // inspectProfile reads the config file to determine the profile type.
-// THIS FUNCTION WAS MISSING IN THE PREVIOUS RESPONSE.
 func inspectProfile(profileName string) (*profileConfig, string, error) {
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
@@ -120,7 +119,7 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 }
 
 // handleIamProfile contains the logic for IAM-based profiles (MFA/role assumption).
-// THIS FUNCTION WAS MISSING IN THE PREVIOUS RESPONSE.
+
 func handleIamProfile(profileName string, pConfig *profileConfig) (*types.Credentials, error) {
 	if pConfig.RoleArn != "" {
 		return assumeRole(profileName, pConfig)

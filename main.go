@@ -2,7 +2,7 @@ package main
 
 import (
 	"awsm/cmd"
-	"awsm/internal/config" // Import the new config package
+	"awsm/internal/config"
 )
 
 // These variables are set by GoReleaser at build time.
