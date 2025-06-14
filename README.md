@@ -6,14 +6,16 @@
 
 `awsm` (AWS Manager) is a standalone binary written in Go that simplifies the tedious process of switching between AWS profiles, handling MFA, assuming roles, and generating console sign-in links. It's a robust and portable replacement for shell function-based helpers.
 
+
 ## Features
 
 -   🚀 **Standalone & Portable:** A single binary with no runtime dependencies.
--   ✨ **Fancy Interface:** Clean, colorized output and formatted tables make it easy to read.
+-   ✨ **Clean Interface:** Clean, colorized output and formatted tables make it easy to read.
 -   🧩 **Intelligent Credential Handling:** Natively supports both **IAM** (MFA/role assumption) and **AWS SSO** (IAM Identity Center) profiles.
--   ⚡️ **Fast & Reliable:** Written in Go, it's significantly faster and more robust than complex shell scripts.
+-   ⚡️ **Fast & Reliable:** Written in Go.
 -   🧠 **Powerful Autocompletion:** Press `<TAB>` to complete commands, flags, and even your personal AWS profile names.
 -   🌐 **Console Login:** Quickly generate a federated sign-in URL to open the AWS Console with your current CLI session.
+
 
 ## Table of Contents
 
@@ -32,19 +34,21 @@
   - [Usage Guide](#usage-guide)
     - [Working with AWS SSO Profiles](#working-with-aws-sso-profiles)
     - [Working with IAM Profiles](#working-with-iam-profiles)
+    - [Switch AWS Profile](#switch-aws-profile)
     - [Switch AWS Region](#switch-aws-region)
-    - [Executing a Single Command](#executing-a-single-command)
     - [AWS Console Login](#aws-console-login)
     - [Using Dedicated Chrome Profiles](#using-dedicated-chrome-profiles)
     - [AWS SSO Profiles Generator](#aws-sso-profiles-generator)
     - [Listing Profiles \& Regions](#listing-profiles--regions)
     - [Full Command Reference](#full-command-reference)
-  - [Development](#development)
   - [Version Information](#version-information)
+  - [Development](#development)
 
 ---
 
+
 ## Installation
+
 
 ### Option 1: From Binaries (Recommended)
 
@@ -58,6 +62,7 @@ _Once binaries are available, find them on the [Releases Page](https://github.co
     chmod +x ~/.local/bin/awsm
     ```
 3.  Proceed to the [Shell Configuration](#shell-configuration-crucial) section below.
+
 
 ### Option 2: Building from Source
 
@@ -84,9 +89,11 @@ If you have Go (1.24+) installed, you can build `awsm` from source.
 
 ---
 
+
 ## Shell Configuration (Crucial)
 
 To get the full power of `awsm`, you need to configure your shell. These steps only need to be done once.
+
 
 ### Step 1: Creating the Alias and enable refreshing credentials
 
@@ -96,24 +103,79 @@ Because a program cannot change the environment of its parent shell, we need to 
 2.  Add the following function **after** the PATH export:
 
     ```sh
+    # A smart, multi-purpose helper for activating AWS profiles.
+    # This is the main command you will use to interact with awsm.
+    #
+    # Usage:
+    #   awsmp <profile-name>      - Activates a profile, automatically refreshing if SSO is expired.
+    #   awsmp login <profile-name>  - Forces a new SSO login and then activates the profile.
+    #   awsmp                       - Clears the current AWS session.
+    #
     awsmp() {
+
     if [[ -z "$1" ]]; then
-        unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE;
+
+        unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_REGION AWS_DEFAULT_REGION;
         echo "AWS session cleared.";
-        return;
+        return 0;
     fi;
-    eval $(awsm export "$1");
+
+    if [[ "$1" == "login" ]]; then
+        if [[ -z "$2" ]]; then
+        echo "Usage: awsmp login <profile-name>" >&2;
+        return 1;
+        fi;
+        local profile_name="$2"
+        echo -e "\033[33mForcing new SSO login for profile '$profile_name'...\033[0m" >&2
+        eval $(awsm sso login "$profile_name");
+        if [[ $? -eq 0 ]]; then
+        echo -e "\033[32mSSO login successful. Activating profile '$profile_name'...\033[0m" >&2;
+        export_commands=$(awsm export "$profile_name")
+        eval "$export_commands";
+        else
+        echo -e "\033[31mSSO login failed.\033[0m" >&2;
+        return 1;
+        fi;
+        return $?;
+    fi;
+
+    local profile_name="$1"
+    local export_commands
+    local exit_code
+
+    export_commands=$(awsm export "$profile_name")
+    exit_code=$?
+
+    if [[ $exit_code -eq 10 ]]; then # Expired SSO session
+        echo -e "\033[33mSSO session expired. Attempting to refresh...\033[0m" >&2;
+        if awsmp login "$profile_name"; then
+        return 0
+        else
+        echo -e "\033[31mSSO login failed. Cannot activate profile.\033[0m" >&2;
+        return 1;
+        fi
+    elif [[ $exit_code -eq 0 ]]; then # Normal success
+        eval "$export_commands";
+        return 0;
+    else # Any other error
+        echo -e "\033[31mFailed to switch profile '$profile_name'.\033[0m" >&2;
+        return $exit_code;
+    fi
     }
 
-    # Helper for switching AWS regions
+    # A helper for switching AWS regions
     awsmr() {
-    # If called with no argument, clear the region override
+    # `awsmr`: Clear the region override
     if [[ -z "$1" ]]; then
         unset AWS_REGION AWS_DEFAULT_REGION;
         echo "AWS Region override cleared.";
-        return;
+        return 0;
     fi;
-    eval $(awsm region set "$1");
+    
+    # `awsmr <region>`: Set the region for the session directly
+    export AWS_REGION="$1"
+    export AWS_DEFAULT_REGION="$1"
+    echo "✔ AWS Region set to '$1'."
     }
 
     # A "smart" wrapper for the aws command that automatically refreshes expired tokens.
@@ -136,7 +198,7 @@ Because a program cannot change the environment of its parent shell, we need to 
     # The -E flag allows for extended regex (using | for OR).
     # The -q flag makes grep silent; we only care about its exit code.
     if echo "$output" | grep -q -E 'ExpiredToken|token.*expired'; then
-        # The token is expired! Time for some magic.
+        # The token is expired!
         echo -e "\033[33mAWS token expired. Refreshing session for '$AWS_PROFILE'...\033[0m" >&2
 
         # Call our awsmp helper to refresh the credentials.
@@ -159,9 +221,11 @@ Because a program cannot change the environment of its parent shell, we need to 
     }
     ```
 
+
 ### Step 2: Enabling Autocompletion (Recommended)
 
 This step will enable `<TAB>` completion for commands, flags, and profile names, making the tool much faster to use.
+
 
 #### For Zsh
 
@@ -182,6 +246,7 @@ This step will enable `<TAB>` completion for commands, flags, and profile names,
     autoload -U compinit && compinit
     ```
 
+
 #### For Bash
 
 1.  Install `bash-completion` if you haven't already (e.g., `brew install bash-completion` on macOS, `sudo apt-get install bash-completion` on Debian/Ubuntu).
@@ -199,6 +264,7 @@ This step will enable `<TAB>` completion for commands, flags, and profile names,
 **Finally, restart your shell or open a new terminal window to apply all changes.**
 
 ---
+
 
 ## Core Concept: Why `awsmp` Uses `export` and `eval`
 
@@ -234,43 +300,53 @@ The `awsmp` function just wraps this pattern in a convenient, memorable shortcut
 
 ---
 
+
 ## Usage Guide
+
 
 ### Working with AWS SSO Profiles
 
 This is the modern, recommended way to use AWS. The flow is two steps: log in once, then activate the profile as needed.
 
-1.  **Log in to your SSO session:**
-    This is a one-time action per session (e.g., once a day). `awsm` will open your browser for you to authenticate.
-    ```bash
-    $ awsm sso login your-sso-profile-name
-    Attempting SSO login for session: my-sso-session-name
-    Your browser should open...
-    ✔ SSO login successful.
-    ```
-2.  **Activate the profile:**
-    Use the `awsmp` alias to get temporary credentials into your shell.
-    ```bash
-    $ awsmp your-sso-profile-name
-    SSO profile detected. Using cached session to get credentials...
-    ✔ Credentials for profile 'your-sso-profile-name' are set.
+**Log in to your SSO session:**
+This is a one-time action per session (e.g., once a day). `awsm` will open your browser for you to authenticate.
+```bash
+$ awsmp login your-sso-profile-name
+Attempting SSO login for session: my-sso-session-name
+Your browser should open...
+✔ SSO login successful.
+Activating profile 'your-sso-profile-name'...
+✔ Credentials for profile 'your-sso-profile-name' are set.
+```
 
-    # Now you can use any AWS command
-    $ aws sts get-caller-identity
-    ```
 
 ### Working with IAM Profiles
 
 This flow is for legacy profiles that use an IAM user's `role_arn` and `mfa_serial`.
 
-1.  **Activate the profile and get credentials:**
-    The `awsmp` command will prompt you for your MFA token.
-    ```bash
-    $ awsmp your-iam-profile-name
-    IAM profile detected. Using STS to get credentials...
-    Enter MFA token for arn:aws:iam::...: 123456
-    ✔ Credentials for profile 'your-iam-profile-name' are set.
-    ```
+**Activate the profile and get credentials:**
+The `awsmp` command will prompt you for your MFA token.
+```bash
+$ awsmp your-iam-profile-name
+IAM profile detected. Using STS to get credentials...
+Enter MFA token for arn:aws:iam::...: 123456
+✔ Credentials for profile 'your-iam-profile-name' are set.
+```
+
+
+### Switch AWS Profile
+
+**Switch the profile:**
+Use the `awsmp` alias to get temporary credentials into your shell.
+```bash
+$ awsmp your-sso-profile-name
+SSO profile detected. Using cached session to get credentials...
+✔ Credentials for profile 'your-sso-profile-name' are set.
+
+# Now you can use any AWS command
+$ aws sts get-caller-identity
+```
+
 
 ### Switch AWS Region
 
@@ -283,14 +359,6 @@ When you're done, you can clear the override to go back to your profile's defaul
 awsmr
 ```
 
-
-### Executing a Single Command
-
-If you only need to run one command with a specific profile, `awsm exec` is a safer alternative that doesn't modify your current shell's environment.
-
-```bash
-$ awsm exec your-profile-name -- aws s3 ls my-bucket
-```
 
 ### AWS Console Login
 This feature allows you to generate an AWS Console URL using the current CLI session credentials. You can use the following commands:
@@ -359,7 +427,8 @@ awsmp my-dev-profile
 awsm console --chrome-profile work
 ```
 
-`awsm` will automatically look up your `work` alias and open the console in the correct Chrome profile. It's a small change that makes a huge difference in your daily workflow
+`awsm` will automatically look up your `work` alias and open the console in the correct Chrome profile.
+
 
 ### AWS SSO Profiles Generator
 This feature generates AWS CLI SSO profiles for each account and role. It creates a configuration file with profiles for all accounts and roles accessible via AWS SSO.
@@ -383,8 +452,7 @@ $ awsm region list
 ```
 awsm
 ├── console       Opens the AWS console in your browser
-├── exec          Execute a command with temporary credentials
-├── export        (Plumbing) Export temporary credentials for a profile
+├── export        Export temporary credentials for a profile
 ├── profile
 │   └── list      List all available AWS profiles
 ├── region
@@ -395,15 +463,6 @@ awsm
 └── completion    Generate shell autocompletion scripts
 ```
 
-## Development
-
-Interested in contributing?
-
-1.  Ensure you have Go (1.24+) installed.
-2.  Clone the repository.
-3.  Dependencies are managed with Go Modules.
-4.  Build the project with `go build .`.
-5.  Run tests with `go test ./...`.
 
 ## Version Information
 
@@ -421,3 +480,14 @@ Version: 1.0.0
 Commit: abc1234
 Date: 2025-06-14
 ```
+
+
+## Development
+
+Interested in contributing?
+
+1.  Ensure you have Go (1.24+) installed.
+2.  Clone the repository.
+3.  Dependencies are managed with Go Modules.
+4.  Build the project with `go build .`.
+5.  Run tests with `go test ./...`.
