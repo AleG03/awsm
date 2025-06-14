@@ -2,12 +2,12 @@
 # This is the main command you will use to interact with awsm.
 #
 # Usage:
-#   acp <profile-name>      - Activates a profile, automatically refreshing if SSO is expired.
-#   acp login <profile-name>  - Forces a new SSO login and then activates the profile.
-#   acp                       - Clears the current AWS session.
+#   awsmp <profile-name>      - Activates a profile, automatically refreshing if SSO is expired.
+#   awsmp login <profile-name>  - Forces a new SSO login and then activates the profile.
+#   awsmp                       - Clears the current AWS session.
 #
-acp() {
-  # --- Handle `acp` (clear session) ---
+awsmp() {
+  # --- Handle `awsmp` (clear session) ---
   if [[ -z "$1" ]]; then
     # This is more efficient than calling a Go program just to unset variables.
     unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_REGION AWS_DEFAULT_REGION;
@@ -15,19 +15,27 @@ acp() {
     return 0;
   fi;
 
-  # --- Handle `acp login <profile>` ---
+  # --- Handle `awsmp login <profile>` ---
   if [[ "$1" == "login" ]]; then
     if [[ -z "$2" ]]; then
-      echo "Usage: acp login <profile-name>" >&2;
+      echo "Usage: awsmp login <profile-name>" >&2;
       return 1;
     fi;
     local profile_name="$2"
     echo -e "\033[33mForcing new SSO login for profile '$profile_name'...\033[0m" >&2
-    eval $(awsm sso login --activate "$profile_name");
+    eval $(awsm sso login "$profile_name");
+    if [[ $? -eq 0 ]]; then
+      echo -e "\033[32mSSO login successful. Activating profile '$profile_name'...\033[0m" >&2;
+      export_commands=$(awsm export "$profile_name")
+      eval "$export_commands";
+    else
+      echo -e "\033[31mSSO login failed.\033[0m" >&2;
+      return 1;
+    fi;
     return $?;
   fi;
 
-  # --- Handle `acp <profile>` (the standard activation/auto-refresh flow) ---
+  # --- Handle `awsmp <profile>` (the standard activation/auto-refresh flow) ---
   local profile_name="$1"
   local export_commands
   local exit_code
@@ -37,7 +45,7 @@ acp() {
 
   if [[ $exit_code -eq 10 ]]; then # Expired SSO session
     echo -e "\033[33mSSO session expired. Attempting to refresh...\033[0m" >&2;
-    if acp login "$profile_name"; then
+    if awsmp login "$profile_name"; then
       return 0
     else
       echo -e "\033[31mSSO login failed. Cannot activate profile.\033[0m" >&2;
@@ -93,13 +101,13 @@ aws() {
     # The token is expired! Time for some magic.
     echo -e "\033[33mAWS token expired. Refreshing session for '$AWS_PROFILE'...\033[0m" >&2
 
-    # Call our acp helper to refresh the credentials.
-    if acp "$AWS_PROFILE"; then
+    # Call our awsmp helper to refresh the credentials.
+    if awsmp "$AWS_PROFILE"; then
       echo -e "\033[32mSession refreshed. Retrying original command...\033[0m" >&2
       # Re-run the original command now that the session is fresh.
       command aws "$@"
     else
-      # If `acp` failed (e.g., bad MFA), show the original error.
+      # If `awsmp` failed (e.g., bad MFA), show the original error.
       echo -e "\033[31mFailed to refresh session. Original error:\033[0m" >&2
       echo "$output"
       return $exit_code
