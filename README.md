@@ -14,7 +14,6 @@
 -   ⚡️ **Fast & Reliable:** Written in Go, it's significantly faster and more robust than complex shell scripts.
 -   🧠 **Powerful Autocompletion:** Press `<TAB>` to complete commands, flags, and even your personal AWS profile names.
 -   🌐 **Console Login:** Quickly generate a federated sign-in URL to open the AWS Console with your current CLI session.
--   🛠️ **Safe & Contained Execution:** Run a single command under a specific profile without cluttering your main shell session using awsm exec.
 
 ## Table of Contents
 
@@ -29,17 +28,19 @@
     - [Step 2: Enabling Autocompletion (Recommended)](#step-2-enabling-autocompletion-recommended)
       - [For Zsh](#for-zsh)
       - [For Bash](#for-bash)
-  - [Core Concept: Why `acp` Uses `export` and `eval`](#core-concept-why-acp-uses-export-and-eval)
+  - [Core Concept: Why `awsmp` Uses `export` and `eval`](#core-concept-why-awsmp-uses-export-and-eval)
   - [Usage Guide](#usage-guide)
     - [Working with AWS SSO Profiles](#working-with-aws-sso-profiles)
     - [Working with IAM Profiles](#working-with-iam-profiles)
     - [Switch AWS Region](#switch-aws-region)
     - [Executing a Single Command](#executing-a-single-command)
     - [AWS Console Login](#aws-console-login)
+    - [Using Dedicated Chrome Profiles](#using-dedicated-chrome-profiles)
     - [AWS SSO Profiles Generator](#aws-sso-profiles-generator)
     - [Listing Profiles \& Regions](#listing-profiles--regions)
     - [Full Command Reference](#full-command-reference)
   - [Development](#development)
+  - [Version Information](#version-information)
 
 ---
 
@@ -89,13 +90,13 @@ To get the full power of `awsm`, you need to configure your shell. These steps o
 
 ### Step 1: Creating the Alias and enable refreshing credentials
 
-Because a program cannot change the environment of its parent shell, we need to use a shell function and `eval` to export the AWS credentials. This `acp` (Assume/Activate Cloud Profile) alias makes the process seamless. Moreover, the `asr` alias makes easier to switch region on the fly.
+Because a program cannot change the environment of its parent shell, we need to use a shell function and `eval` to export the AWS credentials. This `awsmp` (Assume/Activate Cloud Profile) alias makes the process seamless. Moreover, the `awsmr` alias makes easier to switch region on the fly.
 
 1.  Open your shell's configuration file (`~/.zshrc` or `~/.bashrc`).
 2.  Add the following function **after** the PATH export:
 
     ```sh
-    acp() {
+    awsmp() {
     if [[ -z "$1" ]]; then
         unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE;
         echo "AWS session cleared.";
@@ -105,7 +106,7 @@ Because a program cannot change the environment of its parent shell, we need to 
     }
 
     # Helper for switching AWS regions
-    asr() {
+    awsmr() {
     # If called with no argument, clear the region override
     if [[ -z "$1" ]]; then
         unset AWS_REGION AWS_DEFAULT_REGION;
@@ -138,13 +139,13 @@ Because a program cannot change the environment of its parent shell, we need to 
         # The token is expired! Time for some magic.
         echo -e "\033[33mAWS token expired. Refreshing session for '$AWS_PROFILE'...\033[0m" >&2
 
-        # Call our acp helper to refresh the credentials.
-        if acp "$AWS_PROFILE"; then
+        # Call our awsmp helper to refresh the credentials.
+        if awsmp "$AWS_PROFILE"; then
         echo -e "\033[32mSession refreshed. Retrying original command...\033[0m" >&2
         # Re-run the original command now that the session is fresh.
         command aws "$@"
         else
-        # If `acp` failed (e.g., bad MFA), show the original error.
+        # If `awsmp` failed (e.g., bad MFA), show the original error.
         echo -e "\033[31mFailed to refresh session. Original error:\033[0m" >&2
         echo "$output"
         return $exit_code
@@ -199,9 +200,9 @@ This step will enable `<TAB>` completion for commands, flags, and profile names,
 
 ---
 
-## Core Concept: Why `acp` Uses `export` and `eval`
+## Core Concept: Why `awsmp` Uses `export` and `eval`
 
-You might be thinking: *"Why use the `acp` function? Why not just run `awsm export my-profile` directly?"*
+You might be thinking: *"Why use the `awsmp` function? Why not just run `awsm export my-profile` directly?"*
 
 Good question — it comes down to how the shell environment works.
 
@@ -229,7 +230,7 @@ This causes your shell to:
 1. Run `awsm export my-profile`, capturing the output.
 2. Pass that output to `eval`, which executes it as shell commands.
 
-The `acp` function just wraps this pattern in a convenient, memorable shortcut.
+The `awsmp` function just wraps this pattern in a convenient, memorable shortcut.
 
 ---
 
@@ -248,9 +249,9 @@ This is the modern, recommended way to use AWS. The flow is two steps: log in on
     ✔ SSO login successful.
     ```
 2.  **Activate the profile:**
-    Use the `acp` alias to get temporary credentials into your shell.
+    Use the `awsmp` alias to get temporary credentials into your shell.
     ```bash
-    $ acp your-sso-profile-name
+    $ awsmp your-sso-profile-name
     SSO profile detected. Using cached session to get credentials...
     ✔ Credentials for profile 'your-sso-profile-name' are set.
 
@@ -263,9 +264,9 @@ This is the modern, recommended way to use AWS. The flow is two steps: log in on
 This flow is for legacy profiles that use an IAM user's `role_arn` and `mfa_serial`.
 
 1.  **Activate the profile and get credentials:**
-    The `acp` command will prompt you for your MFA token.
+    The `awsmp` command will prompt you for your MFA token.
     ```bash
-    $ acp your-iam-profile-name
+    $ awsmp your-iam-profile-name
     IAM profile detected. Using STS to get credentials...
     Enter MFA token for arn:aws:iam::...: 123456
     ✔ Credentials for profile 'your-iam-profile-name' are set.
@@ -273,13 +274,13 @@ This flow is for legacy profiles that use an IAM user's `role_arn` and `mfa_seri
 
 ### Switch AWS Region
 
-If you need to switch Region after setting a profile, use `asr` command.
+If you need to switch Region after setting a profile, use `awsmr` command.
 ```bash
-asr eu-west-1
+awsmr eu-west-1
 ```
 When you're done, you can clear the override to go back to your profile's default
 ```bash
-asr
+awsmr
 ```
 
 
@@ -296,7 +297,7 @@ This feature allows you to generate an AWS Console URL using the current CLI ses
 
 1. First, make sure you have an active session
 ```bash
-acp my-dev-profile
+awsmp my-dev-profile
 ```
 1. Then, beam to the console! It opens your browser by default.
 ```bash
@@ -306,6 +307,59 @@ If you only want the URL without opening the browser:
 ```bash
 awsm console --no-open
 ```
+
+
+### Using Dedicated Chrome Profiles
+
+Do you keep your "Work" and "Personal" lives separate using different Google Chrome profiles? `awsm` can integrate directly into this workflow! You can tell `awsm` to open the AWS Console in a specific profile, preventing session conflicts and keeping your contexts clean.
+
+This is a two-step, one-time setup:
+
+**1. Create a Configuration File for `awsm`**
+
+First, let's give `awsm` a place to store your personal settings.
+
+```bash
+# Create the directory
+mkdir -p ~/.config/awsm
+
+# Create and open the config file with your favorite editor
+nano ~/.config/awsm/config.toml
+```
+
+**2. Map Your Friendly Names to Chrome's Internal Names**
+
+Now, let's create simple aliases for your profiles. Open the `config.toml` file you just created and paste this snippet, customizing it with your own details:
+
+```toml
+# ~/.config/awsm/config.toml
+
+[chrome_profiles]
+# format: alias = "Actual Profile Directory Name"
+# To find the directory name, go to chrome://version in that profile.
+
+# Examples:
+work = "Profile 1"
+personal = "Default"
+client-x = "Profile 2"
+```
+
+**How do I find my "Profile Directory Name"?**
+Easy! Open the Chrome profile you want to use, type `chrome://version` into the address bar, and look for the **Profile Path**. The last part of that path (e.g., `Profile 1`) is what you need.
+
+**3. Use Your New Alias!**
+
+Now, when you want to open the console, just use your new friendly name.
+
+```bash
+# First, get a session
+awsmp my-dev-profile
+
+# Now, open the console directly in your "work" profile
+awsm console --chrome-profile work
+```
+
+`awsm` will automatically look up your `work` alias and open the console in the correct Chrome profile. It's a small change that makes a huge difference in your daily workflow
 
 ### AWS SSO Profiles Generator
 This feature generates AWS CLI SSO profiles for each account and role. It creates a configuration file with profiles for all accounts and roles accessible via AWS SSO.
@@ -350,3 +404,20 @@ Interested in contributing?
 3.  Dependencies are managed with Go Modules.
 4.  Build the project with `go build .`.
 5.  Run tests with `go test ./...`.
+
+## Version Information
+
+The `awsm` CLI includes version information that is displayed using the `--version` flag. This includes:
+
+- **Version**: The current version of the CLI.
+- **Commit**: The Git commit hash used to build the binary.
+- **Date**: The build date.
+
+Example:
+
+```bash
+$ awsm --version
+Version: 1.0.0
+Commit: abc1234
+Date: 2025-06-14
+```

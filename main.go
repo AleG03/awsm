@@ -1,6 +1,9 @@
 package main
 
-import "awsm/cmd"
+import (
+	"awsm/cmd"
+	"awsm/internal/config" // Import the new config package
+)
 
 // These variables are set by GoReleaser at build time.
 var (
@@ -10,6 +13,10 @@ var (
 )
 
 func main() {
+	// Initialize configuration before doing anything else.
+	config.InitConfig()
+
+	// Pass the version info into the cmd package
 	cmd.SetVersionInfo(version, commit, date)
 	cmd.Execute()
 }

@@ -1,0 +1,113 @@
+# A smart, multi-purpose helper for activating AWS profiles.
+# This is the main command you will use to interact with awsm.
+#
+# Usage:
+#   acp <profile-name>      - Activates a profile, automatically refreshing if SSO is expired.
+#   acp login <profile-name>  - Forces a new SSO login and then activates the profile.
+#   acp                       - Clears the current AWS session.
+#
+acp() {
+  # --- Handle `acp` (clear session) ---
+  if [[ -z "$1" ]]; then
+    # This is more efficient than calling a Go program just to unset variables.
+    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE AWS_REGION AWS_DEFAULT_REGION;
+    echo "AWS session cleared.";
+    return 0;
+  fi;
+
+  # --- Handle `acp login <profile>` ---
+  if [[ "$1" == "login" ]]; then
+    if [[ -z "$2" ]]; then
+      echo "Usage: acp login <profile-name>" >&2;
+      return 1;
+    fi;
+    local profile_name="$2"
+    echo -e "\033[33mForcing new SSO login for profile '$profile_name'...\033[0m" >&2
+    eval $(awsm sso login --activate "$profile_name");
+    return $?;
+  fi;
+
+  # --- Handle `acp <profile>` (the standard activation/auto-refresh flow) ---
+  local profile_name="$1"
+  local export_commands
+  local exit_code
+
+  export_commands=$(awsm export "$profile_name")
+  exit_code=$?
+
+  if [[ $exit_code -eq 10 ]]; then # Expired SSO session
+    echo -e "\033[33mSSO session expired. Attempting to refresh...\033[0m" >&2;
+    if acp login "$profile_name"; then
+      return 0
+    else
+      echo -e "\033[31mSSO login failed. Cannot activate profile.\033[0m" >&2;
+      return 1;
+    fi
+  elif [[ $exit_code -eq 0 ]]; then # Normal success
+    eval "$export_commands";
+    return 0;
+  else # Any other error
+    echo -e "\033[31mFailed to switch profile '$profile_name'.\033[0m" >&2;
+    return $exit_code;
+  fi
+}
+
+# A helper for switching AWS regions
+awsmr() {
+  # `awsmr`: Clear the region override
+  if [[ -z "$1" ]]; then
+    unset AWS_REGION AWS_DEFAULT_REGION;
+    echo "AWS Region override cleared.";
+    return 0;
+  fi;
+  
+  # `awsmr <region>`: Set the region for the session directly
+  export AWS_REGION="$1"
+  export AWS_DEFAULT_REGION="$1"
+  echo "✔ AWS Region set to '$1'."
+}
+
+# (Your `aws` smart wrapper function can remain here as well)
+
+# (The `aws` smart wrapper can also remain here)
+# A "smart" wrapper for the aws command that automatically refreshes expired tokens.
+aws() {
+  # If we don't have an AWS_PROFILE set, there's nothing to refresh.
+  # Just run the command and exit.
+  if [[ -z "$AWS_PROFILE" ]]; then
+    command aws "$@"
+    return
+  fi
+
+  # Run the real `aws` command, capturing all output (stdout and stderr)
+  # into a variable. We also capture the exit code.
+  local output
+  local exit_code
+  output=$(command aws "$@" 2>&1)
+  exit_code=$?
+
+  # Check if the output contains the classic "token expired" error messages.
+  # The -E flag allows for extended regex (using | for OR).
+  # The -q flag makes grep silent; we only care about its exit code.
+  if echo "$output" | grep -q -E 'ExpiredToken|token.*expired'; then
+    # The token is expired! Time for some magic.
+    echo -e "\033[33mAWS token expired. Refreshing session for '$AWS_PROFILE'...\033[0m" >&2
+
+    # Call our acp helper to refresh the credentials.
+    if acp "$AWS_PROFILE"; then
+      echo -e "\033[32mSession refreshed. Retrying original command...\033[0m" >&2
+      # Re-run the original command now that the session is fresh.
+      command aws "$@"
+    else
+      # If `acp` failed (e.g., bad MFA), show the original error.
+      echo -e "\033[31mFailed to refresh session. Original error:\033[0m" >&2
+      echo "$output"
+      return $exit_code
+    fi
+  else
+    # The command ran without an expiration error.
+    # Print its original output and return its original exit code.
+    echo "$output"
+    return $exit_code
+  fi
+}

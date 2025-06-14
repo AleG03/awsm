@@ -18,7 +18,6 @@ var (
 	BoldColor    = color.New(color.Bold)
 )
 
-
 func PrintTable(headers []string, data [][]string) {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader(headers)

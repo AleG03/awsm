@@ -93,7 +93,7 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 				util.InfoColor.Fprintf(os.Stderr, "  -> Processing account: %s (%s)\n", *acc.AccountName, *acc.AccountId)
 
 				rolesPaginator := sso.NewListAccountRolesPaginator(ssoClient, &sso.ListAccountRolesInput{
-					AccessToken: &accessToken, 
+					AccessToken: &accessToken,
 					AccountId:   acc.AccountId,
 				})
 				for rolesPaginator.HasMorePages() {
@@ -133,7 +133,6 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 		return nil
 	},
 }
-
 
 func findLatestSsoToken(cacheDir string) (string, error) {
 	files, err := os.ReadDir(cacheDir)
