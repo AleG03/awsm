@@ -178,46 +178,44 @@ Because a program cannot change the environment of its parent shell, we need to 
     echo "✔ AWS Region set to '$1'."
     }
 
-    # A "smart" wrapper for the aws command that automatically refreshes expired tokens.
+    # A wrapper for the aws command that performs a "pre-flight check"
+    # to auto-refresh expired tokens before running the real command.
+    # This correctly handles interactive commands like `ssm start-session`.
     aws() {
-    # If we don't have an AWS_PROFILE set, there's nothing to refresh.
-    # Just run the command and exit.
+    # If AWS_PROFILE isn't set, there's nothing for us to do. Run the command directly.
     if [[ -z "$AWS_PROFILE" ]]; then
-        command aws "$@"
-        return
-    fi
+        command aws "$@";
+        return;
+    fi;
 
-    # Run the real `aws` command, capturing all output (stdout and stderr)
-    # into a variable. We also capture the exit code.
-    local output
-    local exit_code
-    output=$(command aws "$@" 2>&1)
-    exit_code=$?
+    # PRE-FLIGHT CHECK:
+    # Run a read-only command to check if credentials are valid.
+    # We redirect stdout to /dev/null because we only care if it fails.
+    if ! command aws sts get-caller-identity > /dev/null 2>&1; then
+        # The pre-flight check failed.
+        # Re-run the command, but this time capture stderr to check the error message.
+        local error_output
+        error_output=$(command aws sts get-caller-identity 2>&1 >/dev/null)
 
-    # Check if the output contains the classic "token expired" error messages.
-    # The -E flag allows for extended regex (using | for OR).
-    # The -q flag makes grep silent; we only care about its exit code.
-    if echo "$output" | grep -q -E 'ExpiredToken|token.*expired'; then
-        # The token is expired!
-        echo -e "\033[33mAWS token expired. Refreshing session for '$AWS_PROFILE'...\033[0m" >&2
-
-        # Call our awsmp helper to refresh the credentials.
-        if awsmp "$AWS_PROFILE"; then
-        echo -e "\033[32mSession refreshed. Retrying original command...\033[0m" >&2
-        # Re-run the original command now that the session is fresh.
-        command aws "$@"
-        else
-        # If `awsmp` failed (e.g., bad MFA), show the original error.
-        echo -e "\033[31mFailed to refresh session. Original error:\033[0m" >&2
-        echo "$output"
-        return $exit_code
+        # Check if the error was specifically due to an expired token.
+        if echo "$error_output" | grep -q -E 'ExpiredToken|token.*expired'; then
+        echo -e "\033[33mAWS token expired. Refreshing session for '$AWS_PROFILE'...\033[0m" >&2;
+        
+        # If it's expired, call our `awsmp` helper to refresh the session.
+        if ! awsmp "$AWS_PROFILE"; then
+            echo -e "\033[31mFailed to refresh session. Aborting command.\033[0m" >&2;
+            # Print the original error so the user knows what happened.
+            echo "$error_output" >&2
+            return 1;
         fi
-    else
-        # The command ran without an expiration error.
-        # Print its original output and return its original exit code.
-        echo "$output"
-        return $exit_code
+        echo -e "\033[32mSession refreshed. Proceeding with original command...\033[0m" >&2;
+        fi
     fi
+
+    # EXECUTE THE REAL COMMAND:
+    # If we get here, credentials are valid. Run the user's original command
+    # and connect it directly to the terminal.
+    command aws "$@";
     }
     ```
 

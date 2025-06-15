@@ -75,7 +75,6 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 		destination := fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
 		loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
 
-
 		if dontOpenBrowser {
 			util.SuccessColor.Fprintln(os.Stderr, "✔ Console URL generated successfully!")
 			fmt.Println(loginURL)

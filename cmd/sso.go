@@ -44,7 +44,6 @@ var ssoLoginCmd = &cobra.Command{
 	},
 }
 
-
 func init() {
 	ssoCmd.AddCommand(ssoLoginCmd)
 	rootCmd.AddCommand(ssoCmd)

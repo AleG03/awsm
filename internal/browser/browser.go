@@ -9,7 +9,6 @@ import (
 	"github.com/pkg/browser"
 )
 
-
 // It takes the friendly alias name as input.
 func OpenURL(url, chromeProfileAlias string) error {
 	// If no profile is requested, use the default simple method.
