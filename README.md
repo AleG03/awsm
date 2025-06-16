@@ -38,6 +38,7 @@
     - [Switch AWS Region](#switch-aws-region)
     - [AWS Console Login](#aws-console-login)
     - [Using Dedicated Chrome Profiles](#using-dedicated-chrome-profiles)
+    - [Using Firefox Multi-Account Containers](#using-firefox-multi-account-containers)
     - [AWS SSO Profiles Generator](#aws-sso-profiles-generator)
     - [Listing Profiles \& Regions](#listing-profiles--regions)
     - [Full Command Reference](#full-command-reference)
@@ -426,6 +427,25 @@ awsm console --chrome-profile work
 ```
 
 `awsm` will automatically look up your `work` alias and open the console in the correct Chrome profile.
+
+
+### Using Firefox Multi-Account Containers
+
+When managing multiple AWS accounts, you can use Firefox's Multi-Account Containers feature to isolate your AWS Console sessions. `awsm` can automatically create and use containers named after your AWS profiles:
+
+```bash
+# Open AWS Console in a Firefox container named after your AWS profile
+awsm console --firefox-container
+
+# Or use the shorter alias
+awsm c --firefox-container
+```
+
+The container will be automatically created if it doesn't exist, and Firefox will open the AWS Console in a new tab within that container. This helps you maintain separate sessions for different AWS accounts and prevents cross-account contamination.
+
+Note: You need to have Firefox installed with both Multi-Account Containers extension and Open external links in a container extension.
+https://addons.mozilla.org/en-US/firefox/addon/multi-account-containers/ |
+https://addons.mozilla.org/en-US/firefox/addon/open-url-in-container/
 
 
 ### AWS SSO Profiles Generator

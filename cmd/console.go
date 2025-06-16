@@ -16,18 +16,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var dontOpenBrowser bool
+var (
+	dontOpenBrowser bool
+	useFirefox      bool
+)
 
 var consoleCmd = &cobra.Command{
 	Use:   "console",
 	Short: "Opens the AWS console in your browser",
 	Long: `Generates a federated sign-in URL for the current AWS session and
-automatically opens it in your default browser or a specified Chrome profile.
+automatically opens it in your default browser, a specified Chrome profile,
+or a Firefox Multi-Account Container.
+
+By default, opens in the default browser.
+Use --chrome-profile to open in a specific Chrome profile.
+Use --firefox-container to open in a Firefox container matching your AWS profile name.
 
 Make sure to set a session first with 'awsmp <profile-name>'.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-
 		util.InfoColor.Fprintln(os.Stderr, "Getting current credentials...")
 		awsCfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
@@ -81,7 +88,16 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 		} else {
 			util.InfoColor.Fprintln(os.Stderr, "Opening AWS Console...")
 
-			if err := browser.OpenURL(loginURL, chromeProfile); err != nil {
+			// If --firefox-container is used, get the current AWS profile name
+			var firefoxContainer string
+			if useFirefox {
+				firefoxContainer = os.Getenv("AWS_PROFILE")
+				if firefoxContainer == "" {
+					return fmt.Errorf("no AWS profile set. Please run 'awsmp <profile-name>' first")
+				}
+			}
+
+			if err := browser.OpenURL(loginURL, chromeProfile, firefoxContainer); err != nil {
 				util.ErrorColor.Fprintf(os.Stderr, "Could not open browser automatically. Please copy this URL:\n")
 				fmt.Println(loginURL)
 				return fmt.Errorf("could not open browser: %w", err)
@@ -95,5 +111,6 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 
 func init() {
 	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Only print the URL, do not open in a browser")
+	consoleCmd.Flags().BoolVar(&useFirefox, "firefox-container", false, "Open in a Firefox container matching your AWS profile name")
 	rootCmd.AddCommand(consoleCmd)
 }

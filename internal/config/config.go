@@ -48,7 +48,6 @@ func GetChromeProfileDirectory(alias string) string {
 		return viper.GetString(key)
 	}
 
-	// If the alias doesn't exist, assume the user provided the actual
-	// directory name (e.g., "Profile 1") and return it directly.
+	// No mapping found, assume the input is already a directory name.
 	return alias
 }
