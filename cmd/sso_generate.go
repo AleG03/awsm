@@ -34,7 +34,7 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 		if err != nil {
 			return fmt.Errorf("cannot find home directory: %w", err)
 		}
-		outputFile := filepath.Join(home, ".aws", "aws_sso_profiles.conf")
+		outputFile := filepath.Join(home, ".aws", "config")
 
 		// 1. Log in to get a fresh token cached by the AWS CLI
 		util.InfoColor.Printf("Attempting SSO login for session: %s\n", util.BoldColor.Sprint(ssoSession))
@@ -117,19 +117,83 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 						profileBuilder.WriteString(fmt.Sprintf("sso_role_name = %s\n", *role.RoleName))
 						profileBuilder.WriteString(fmt.Sprintf("region = %s\n", awsRegion))
 						profileBuilder.WriteString("\n")
+					}
+				}
+			}
+		}
+
+		// Read existing config
+		existingConfigBytes, err := os.ReadFile(outputFile)
+		existingConfig := ""
+		if err == nil {
+			existingConfig = string(existingConfigBytes)
+		}
+
+		// Parse existing profile names
+		existingProfiles := make(map[string]bool)
+		profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
+		for _, match := range profileHeaderRegex.FindAllStringSubmatch(existingConfig, -1) {
+			if len(match) > 1 {
+				existingProfiles[match[1]] = true
+			}
+		}
+
+		// Instead of writing all profiles, only append new ones
+		var newProfilesBuilder strings.Builder
+		for _, page := range accounts {
+			for _, acc := range page.AccountList {
+				for rolesPaginator := sso.NewListAccountRolesPaginator(ssoClient, &sso.ListAccountRolesInput{
+					AccessToken: &accessToken,
+					AccountId:   acc.AccountId,
+				}); rolesPaginator.HasMorePages(); {
+					rolesPage, err := rolesPaginator.NextPage(context.TODO())
+					if err != nil {
+						util.ErrorColor.Fprintf(os.Stderr, "    Could not list roles for account %s: %v\n", *acc.AccountId, err)
+						continue
+					}
+					for _, role := range rolesPage.RoleList {
+						cleanAccountName := strings.ToLower(*acc.AccountName)
+						cleanAccountName = cleaner.ReplaceAllString(cleanAccountName, "-")
+						cleanRoleName := strings.ToLower(*role.RoleName)
+						cleanRoleName = cleaner.ReplaceAllString(cleanRoleName, "-")
+						profileName := fmt.Sprintf("%s-%s", cleanAccountName, cleanRoleName)
+						if existingProfiles[profileName] {
+							continue // Skip if profile already exists
+						}
+						newProfilesBuilder.WriteString(fmt.Sprintf("[profile %s]\n", profileName))
+						newProfilesBuilder.WriteString(fmt.Sprintf("sso_session = %s\n", ssoSession))
+						newProfilesBuilder.WriteString(fmt.Sprintf("sso_account_id = %s\n", *acc.AccountId))
+						newProfilesBuilder.WriteString(fmt.Sprintf("sso_role_name = %s\n", *role.RoleName))
+						newProfilesBuilder.WriteString(fmt.Sprintf("region = %s\n", awsRegion))
+						newProfilesBuilder.WriteString("\n")
 						profileCount++
 					}
 				}
 			}
 		}
 
-		// 6. Write to file
-		if err := os.WriteFile(outputFile, []byte(profileBuilder.String()), 0644); err != nil {
-			return fmt.Errorf("failed to write profiles to %s: %w", outputFile, err)
+		// Only append if there are new profiles
+		if newProfilesBuilder.Len() > 0 {
+			// Ensure a newline after the previous session
+			appendContent := newProfilesBuilder.String()
+			if len(existingConfig) > 0 && !strings.HasSuffix(existingConfig, "\n") {
+				appendContent = "\n" + appendContent
+			}
+
+			f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				return fmt.Errorf("failed to open %s for appending: %w", outputFile, err)
+			}
+			defer f.Close()
+			if _, err := f.WriteString(appendContent); err != nil {
+				return fmt.Errorf("failed to append profiles to %s: %w", outputFile, err)
+			}
+			util.SuccessColor.Printf("\n✔ Done! %d new profiles appended to %s\n", profileCount, util.BoldColor.Sprint(outputFile))
+		} else {
+			util.InfoColor.Println("No new profiles to add. All profiles already exist in your config.")
 		}
 
-		util.SuccessColor.Printf("\n✔ Done! %d profiles written to %s\n", profileCount, util.BoldColor.Sprint(outputFile))
-		util.InfoColor.Println("You can now copy the profiles you need from that file into your main ~/.aws/config.")
+		util.InfoColor.Println("You can now use the new profiles from your ~/.aws/config.")
 		return nil
 	},
 }
