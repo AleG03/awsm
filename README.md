@@ -40,6 +40,7 @@
     - [Using Dedicated Chrome Profiles](#using-dedicated-chrome-profiles)
     - [Using Firefox Multi-Account Containers](#using-firefox-multi-account-containers)
     - [AWS SSO Profiles Generator](#aws-sso-profiles-generator)
+      - [Setting up SSO Sessions](#setting-up-sso-sessions)
     - [Listing Profiles \& Regions](#listing-profiles--regions)
     - [Full Command Reference](#full-command-reference)
   - [Version Information](#version-information)
@@ -451,9 +452,37 @@ https://addons.mozilla.org/en-US/firefox/addon/open-url-in-container/
 ### AWS SSO Profiles Generator
 This feature generates AWS CLI SSO profiles for each account and role. It creates a configuration file with profiles for all accounts and roles accessible via AWS SSO.
 
-Usage:
+#### Setting up SSO Sessions
 
-- `awsm sso generate [sso-session] [aws-region]`: Generates the profiles and writes them to `~/.aws/aws_sso_profiles.conf`. You can copy the contents of this file into your `~/.aws/config` if desired.
+Before generating profiles, you need to configure your SSO session. You have two options:
+
+1. **Using the AWS CLI** (Recommended):
+   ```bash
+   # Configure a new SSO session
+   aws configure sso
+   # Follow the prompts to enter:
+   # - SSO start URL (e.g., https://my-sso.awsapps.com/start)
+   # - SSO Region (e.g., us-east-1)
+   # - Session name (e.g., my-company)
+   ```
+
+2. **Manually editing `~/.aws/config`**:
+   Add the following to your AWS config file:
+   ```ini
+   [sso-session my-company]
+   sso_start_url = https://my-sso.awsapps.com/start
+   sso_region = us-east-1
+   sso_registration_scopes = sso:account:access
+   ```
+
+Once your SSO session is configured, you can generate profiles:
+
+```bash
+# Generate profiles using the configured SSO session
+$ awsm sso generate my-company us-east-1
+```
+
+This will create profiles for all accounts and roles you have access to via SSO.
 
 ### Listing Profiles & Regions
 
