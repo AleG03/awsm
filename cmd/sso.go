@@ -44,7 +44,34 @@ var ssoLoginCmd = &cobra.Command{
 	},
 }
 
+var ssoListCmd = &cobra.Command{
+	Use:     "list",
+	Short:   "List all AWS SSO profiles",
+	Aliases: []string{"ls-sso"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		profiles, err := aws.ListSSOSessions()
+		if err != nil {
+			return err
+		}
+
+		if len(profiles) == 0 {
+			util.WarnColor.Println("No SSO profiles found.")
+			return nil
+		}
+
+		util.InfoColor.Println("Available AWS SSO Profiles:")
+		var data [][]string
+		for _, p := range profiles {
+			data = append(data, []string{p})
+		}
+
+		util.PrintTable([]string{"SSO Profile"}, data)
+		return nil
+	},
+}
+
 func init() {
 	ssoCmd.AddCommand(ssoLoginCmd)
+	ssoCmd.AddCommand(ssoListCmd)
 	rootCmd.AddCommand(ssoCmd)
 }

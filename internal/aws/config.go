@@ -40,14 +40,40 @@ func ListProfiles() ([]string, error) {
 	var profiles []string
 	for _, section := range cfg.Sections() {
 		name := section.Name()
-		if name == "DEFAULT" {
-			continue
+		if strings.HasPrefix(name, "profile") {
+			profileName := strings.TrimPrefix(name, "profile ")
+			profiles = append(profiles, profileName)
 		}
-		profileName := strings.TrimPrefix(name, "profile ")
-		profiles = append(profiles, profileName)
 	}
 
 	return profiles, nil
+}
+
+// ListSSOSessions lists all SSO sessions from the AWS config file.
+func ListSSOSessions() ([]string, error) {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("failed to read AWS config file at %s: %w", configPath, err)
+	}
+
+	var sessions []string
+	for _, section := range cfg.Sections() {
+		name := section.Name()
+		if  strings.HasPrefix(name, "sso-session") && name != "SSO PROFILE" {
+			sessionName := strings.TrimPrefix(name, "sso-session ")
+			sessions = append(sessions, sessionName)
+		}
+	}
+
+	return sessions, nil
 }
 
 // ProfileExists checks if a profile exists in the AWS config.
