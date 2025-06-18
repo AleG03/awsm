@@ -96,3 +96,93 @@ func GetSsoSessionForProfile(profileName string) (string, error) {
 	// If we get here, the value is valid. Return it.
 	return ssoSessionValue, nil
 }
+
+// ProfileType represents the type of AWS profile
+type ProfileType string
+
+const (
+	ProfileTypeSSO ProfileType = "SSO"
+	ProfileTypeIAM ProfileType = "IAM"
+	ProfileTypeKey ProfileType = "Key"
+)
+
+// ProfileInfo contains detailed information about an AWS profile
+type ProfileInfo struct {
+	Name          string
+	Type          ProfileType
+	Region        string
+	RoleARN       string
+	SourceProfile string
+	SSOStartURL   string
+	SSORegion     string
+	SSOAccountID  string
+	SSORoleName   string
+	SSOSession    string
+	MFASerial     string
+	IsActive      bool
+}
+
+// GetProfileType determines the type of AWS profile based on its configuration
+func getProfileType(section *ini.Section) ProfileType {
+	if section.HasKey("sso_session") || section.HasKey("sso_start_url") {
+		return ProfileTypeSSO
+	}
+	if section.HasKey("role_arn") {
+		return ProfileTypeIAM
+	}
+	return ProfileTypeKey
+}
+
+// ListProfilesDetailed returns detailed information about all AWS profiles
+func ListProfilesDetailed() ([]ProfileInfo, error) {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []ProfileInfo{}, nil
+		}
+		return nil, fmt.Errorf("failed to read AWS config file at %s: %w", configPath, err)
+	}
+
+	// Get current active profile
+	activeProfile := os.Getenv("AWS_PROFILE")
+
+	var profiles []ProfileInfo
+	for _, section := range cfg.Sections() {
+		name := section.Name()
+		if name == "DEFAULT" {
+			continue
+		}
+
+		profileName := strings.TrimPrefix(name, "profile ")
+		if profileName == name {
+			// Skip SSO session sections
+			if strings.HasPrefix(name, "sso-session") {
+				continue
+			}
+		}
+
+		profile := ProfileInfo{
+			Name:          profileName,
+			Type:          getProfileType(section),
+			Region:        section.Key("region").String(),
+			RoleARN:       section.Key("role_arn").String(),
+			SourceProfile: section.Key("source_profile").String(),
+			SSOStartURL:   section.Key("sso_start_url").String(),
+			SSORegion:     section.Key("sso_region").String(),
+			SSOAccountID:  section.Key("sso_account_id").String(),
+			SSORoleName:   section.Key("sso_role_name").String(),
+			SSOSession:    section.Key("sso_session").String(),
+			MFASerial:     section.Key("mfa_serial").String(),
+			IsActive:      profileName == activeProfile,
+		}
+
+		profiles = append(profiles, profile)
+	}
+
+	return profiles, nil
+}

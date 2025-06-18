@@ -8,10 +8,9 @@ import (
 )
 
 var (
-	version       string
-	commit        string
-	date          string
-	chromeProfile string // This will hold the value from the flag
+	version string
+	commit  string
+	date    string
 )
 
 var rootCmd = &cobra.Command{
@@ -37,8 +36,4 @@ func SetVersionInfo(v, c, d string) {
 }
 
 func init() {
-	// Add a persistent flag to the root command.
-	// "Persistent" means it will be available to all subcommands.
-	// It will store the provided value in the `chromeProfile` variable.
-	rootCmd.PersistentFlags().StringVar(&chromeProfile, "chrome-profile", "", "Specify a Chrome profile alias or directory name (e.g., 'work')")
 }

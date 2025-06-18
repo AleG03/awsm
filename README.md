@@ -486,55 +486,48 @@ This will create profiles for all accounts and roles you have access to via SSO.
 
 ### Listing Profiles & Regions
 
+The profile listing command provides a rich interface for viewing and filtering your AWS profiles:
+
 ```bash
 # List all configured AWS profiles
 $ awsm profile list
 
+# List profiles with detailed information
+$ awsm profile list --detailed
+
+# Filter profiles by type (SSO, IAM, Key)
+$ awsm profile list --type SSO
+
+# Filter profiles by region
+$ awsm profile list --region us-east-1
+
+# Filter profiles by name
+$ awsm profile list --name prod
+
+# Sort profiles by different fields
+$ awsm profile list --sort type     # Sort by profile type
+$ awsm profile list --sort region   # Sort by region
+$ awsm profile list --sort name     # Sort by name (default)
+
+# Get profiles in JSON format for scripting
+$ awsm profile list --json
+
+# Examples with JSON and jq
+$ awsm profile list --json | jq '.[] | select(.is_active)'          # Get active profile
+$ awsm profile list --json | jq '.[] | select(.type == "SSO")'     # Get all SSO profiles
+$ awsm profile list --json | jq '[.[].account_id] | unique'         # List unique accounts
+```
+
+The profile list shows:
+- Profile name and type (SSO/IAM/Key)
+- AWS Account ID
+- Region
+- Active status
+- Additional details in detailed view:
+  - Role ARN for IAM profiles
+  - SSO session and role for SSO profiles
+  - MFA device for IAM profiles
+
 # List all available AWS regions
 $ awsm region list
-```
-
-### Full Command Reference
-
-```
-awsm
-├── console       Opens the AWS console in your browser
-├── export        Export temporary credentials for a profile
-├── profile
-│   └── list      List all available AWS profiles
-├── region
-│   └── list      List all available AWS regions
-├── sso
-│   ├── login     Log in to an AWS SSO session
-│   └── generate  Generate profiles for all accessible SSO accounts/roles
-└── completion    Generate shell autocompletion scripts
-```
-
-
-## Version Information
-
-The `awsm` CLI includes version information that is displayed using the `--version` flag. This includes:
-
-- **Version**: The current version of the CLI.
-- **Commit**: The Git commit hash used to build the binary.
-- **Date**: The build date.
-
-Example:
-
-```bash
-$ awsm --version
-Version: 1.0.0
-Commit: abc1234
-Date: 2025-06-14
-```
-
-
-## Development
-
-Interested in contributing?
-
-1.  Ensure you have Go (1.24+) installed.
-2.  Clone the repository.
-3.  Dependencies are managed with Go Modules.
-4.  Build the project with `go build .`.
-5.  Run tests with `go test ./...`.
+````

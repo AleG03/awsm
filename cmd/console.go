@@ -19,6 +19,7 @@ import (
 var (
 	dontOpenBrowser bool
 	useFirefox      bool
+	chromeProfile   string
 )
 
 var consoleCmd = &cobra.Command{
@@ -110,7 +111,8 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 }
 
 func init() {
-	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Only print the URL, do not open in a browser")
-	consoleCmd.Flags().BoolVar(&useFirefox, "firefox-container", false, "Open in a Firefox container matching your AWS profile name")
+	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Don't open the browser, just print the URL")
+	consoleCmd.Flags().BoolVarP(&useFirefox, "firefox-container", "f", false, "Open in Firefox using a container named after the AWS profile")
+	consoleCmd.Flags().StringVarP(&chromeProfile, "chrome-profile", "c", "", "Specify a Chrome profile alias or directory name (e.g., 'work')")
 	rootCmd.AddCommand(consoleCmd)
 }

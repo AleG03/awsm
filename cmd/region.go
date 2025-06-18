@@ -3,6 +3,7 @@ package cmd
 import (
 	"awsm/internal/util"
 	"context"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -33,12 +34,15 @@ var regionListCmd = &cobra.Command{
 			return err
 		}
 
-		var data [][]string
-		for _, region := range output.Regions {
-			data = append(data, []string{*region.RegionName})
+		if len(output.Regions) == 0 {
+			util.WarnColor.Println("No regions found.")
+			return nil
 		}
 
-		util.PrintTable([]string{"Region"}, data)
+		util.InfoColor.Println("\nAvailable AWS Regions:")
+		for _, region := range output.Regions {
+			fmt.Printf("└─ %s\n", *region.RegionName)
+		}
 		return nil
 	},
 }
