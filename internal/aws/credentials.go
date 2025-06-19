@@ -1,10 +1,12 @@
 package aws
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,6 +39,11 @@ type profileConfig struct {
 // GetCredentialsForProfile is the main entry point for getting credentials.
 // It inspects the profile and dispatches to the correct handler.
 func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isStatic bool, err error) {
+	// Auto-refresh credentials if needed
+	if err := AutoRefreshCredentials(profileName); err != nil {
+		// If auto-refresh fails, continue with existing logic (might still work)
+		util.WarnColor.Fprintf(os.Stderr, "Auto-refresh failed: %v\n", err)
+	}
 	pConfig, profileType, err := inspectProfile(profileName)
 	if err != nil {
 		return nil, false, err
@@ -194,4 +201,218 @@ func getSessionToken(profileName string, pConfig *profileConfig) (*types.Credent
 		return nil, fmt.Errorf("failed to get session token: %w", err)
 	}
 	return result.Credentials, nil
+}
+
+// GetAWSCredentialsPath returns the path to the AWS credentials file.
+func GetAWSCredentialsPath() (string, error) {
+	credentialsPath := os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
+	if credentialsPath != "" {
+		return credentialsPath, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not get user home directory: %w", err)
+	}
+	return filepath.Join(home, ".aws", "credentials"), nil
+}
+
+// UpdateCredentialsFile updates the default profile in the AWS credentials file
+func UpdateCredentialsFile(creds *TempCredentials, region, profileName string) error {
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	// Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(credentialsPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// Load or create credentials file
+	var cfg *ini.File
+	if _, err := os.Stat(credentialsPath); os.IsNotExist(err) {
+		cfg = ini.Empty()
+	} else {
+		cfg, err = ini.Load(credentialsPath)
+		if err != nil {
+			return fmt.Errorf("failed to load credentials file: %w", err)
+		}
+	}
+
+	// Get or create default section
+	section, err := cfg.GetSection("default")
+	if err != nil {
+		section, err = cfg.NewSection("default")
+		if err != nil {
+			return fmt.Errorf("failed to create default section: %w", err)
+		}
+	}
+
+	// Update credentials
+	section.Key("aws_access_key_id").SetValue(creds.AccessKeyId)
+	section.Key("aws_secret_access_key").SetValue(creds.SecretAccessKey)
+	section.Key("aws_session_token").SetValue(creds.SessionToken)
+
+	// Update region if provided
+	if region != "" {
+		section.Key("region").SetValue(region)
+	}
+
+	// Track the source profile name
+	section.Key("# source_profile").SetValue(profileName)
+
+	// Save the file
+	return cfg.SaveTo(credentialsPath)
+}
+
+// GetCurrentProfileName returns the name of the profile currently set in default
+func GetCurrentProfileName() string {
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return ""
+	}
+
+	// Read file directly to parse comment
+	file, err := os.Open(credentialsPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	inDefaultSection := false
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "[default]" {
+			inDefaultSection = true
+			continue
+		}
+
+		if strings.HasPrefix(line, "[") && line != "[default]" {
+			inDefaultSection = false
+			continue
+		}
+
+		if inDefaultSection && strings.HasPrefix(line, "# source_profile") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+
+	return ""
+}
+
+// UpdateStaticProfile updates the default profile to use a static profile's credentials
+func UpdateStaticProfile(profileName string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	// Load config file to get region
+	cfgFile, err := ini.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read AWS config file: %w", err)
+	}
+
+	sectionName := "profile " + profileName
+	configSection, err := cfgFile.GetSection(sectionName)
+	if err != nil {
+		configSection, err = cfgFile.GetSection(profileName)
+		if err != nil {
+			return fmt.Errorf("could not find profile section for '%s'", profileName)
+		}
+	}
+
+	region := configSection.Key("region").String()
+
+	// Load credentials file to get static credentials
+	credFile, err := ini.Load(credentialsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read AWS credentials file: %w", err)
+	}
+
+	sourceSection, err := credFile.GetSection(profileName)
+	if err != nil {
+		return fmt.Errorf("could not find credentials for profile '%s'", profileName)
+	}
+
+	accessKey := sourceSection.Key("aws_access_key_id").String()
+	secretKey := sourceSection.Key("aws_secret_access_key").String()
+
+	if accessKey == "" || secretKey == "" {
+		return fmt.Errorf("profile '%s' does not have static credentials", profileName)
+	}
+
+	// Update default section
+	defaultSection, err := credFile.GetSection("default")
+	if err != nil {
+		defaultSection, err = credFile.NewSection("default")
+		if err != nil {
+			return fmt.Errorf("failed to create default section: %w", err)
+		}
+	}
+
+	defaultSection.Key("aws_access_key_id").SetValue(accessKey)
+	defaultSection.Key("aws_secret_access_key").SetValue(secretKey)
+	defaultSection.DeleteKey("aws_session_token") // Remove session token for static credentials
+
+	if region != "" {
+		defaultSection.Key("region").SetValue(region)
+	}
+
+	// Track the source profile name
+	defaultSection.Key("# source_profile").SetValue(profileName)
+
+	return credFile.SaveTo(credentialsPath)
+}
+
+// SetRegion updates the region in the default profile
+func SetRegion(region string) error {
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	// Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(credentialsPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// Load or create credentials file
+	var cfg *ini.File
+	if _, err := os.Stat(credentialsPath); os.IsNotExist(err) {
+		cfg = ini.Empty()
+	} else {
+		cfg, err = ini.Load(credentialsPath)
+		if err != nil {
+			return fmt.Errorf("failed to load credentials file: %w", err)
+		}
+	}
+
+	// Get or create default section
+	section, err := cfg.GetSection("default")
+	if err != nil {
+		section, err = cfg.NewSection("default")
+		if err != nil {
+			return fmt.Errorf("failed to create default section: %w", err)
+		}
+	}
+
+	// Update region
+	section.Key("region").SetValue(region)
+
+	// Save the file
+	return cfg.SaveTo(credentialsPath)
 }

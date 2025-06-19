@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"awsm/internal/util"
+	"awsm/internal/aws"
+	"awsm/internal/tui"
 	"context"
 	"fmt"
 
@@ -21,7 +22,7 @@ var regionListCmd = &cobra.Command{
 	Short:   "List all available AWS regions",
 	Aliases: []string{"ls"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		util.InfoColor.Println("Fetching available AWS regions...")
+		fmt.Fprintln(cmd.ErrOrStderr(), tui.InfoStyle.Render("🌍 Fetching available AWS regions..."))
 
 		cfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
@@ -35,19 +36,37 @@ var regionListCmd = &cobra.Command{
 		}
 
 		if len(output.Regions) == 0 {
-			util.WarnColor.Println("No regions found.")
+			fmt.Fprintln(cmd.ErrOrStderr(), tui.WarningStyle.Render("⚠ No regions found."))
 			return nil
 		}
 
-		util.InfoColor.Println("\nAvailable AWS Regions:")
+		fmt.Fprintln(cmd.OutOrStdout(), tui.HeaderStyle.Render("\n🌍 Available AWS Regions:"))
 		for _, region := range output.Regions {
-			fmt.Printf("└─ %s\n", *region.RegionName)
+			fmt.Printf("  %s %s\n", tui.InfoStyle.Render("•"), *region.RegionName)
 		}
+		return nil
+	},
+}
+
+var regionSetCmd = &cobra.Command{
+	Use:   "set <region>",
+	Short: "Set the region for the default profile",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		region := args[0]
+
+		err := aws.SetRegion(region)
+		if err != nil {
+			return fmt.Errorf("failed to set region: %w", err)
+		}
+
+		fmt.Fprintln(cmd.OutOrStderr(), tui.SuccessStyle.Render("✓ Region set to '"+region+"' in default profile."))
 		return nil
 	},
 }
 
 func init() {
 	regionCmd.AddCommand(regionListCmd)
+	regionCmd.AddCommand(regionSetCmd)
 	rootCmd.AddCommand(regionCmd)
 }

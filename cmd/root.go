@@ -1,3 +1,11 @@
+/*
+AWSM - AWS Manager
+Copyright (c) 2024 Alessandro Gallo. All rights reserved.
+
+Licensed under the Business Source License 1.1.
+See LICENSE file for full terms.
+*/
+
 package cmd
 
 import (
@@ -27,13 +35,9 @@ func Execute() {
 	}
 }
 
-// SetVersionInfo is called by main.go to pass in build-time variables.
 func SetVersionInfo(v, c, d string) {
 	version = v
 	commit = c
 	date = d
 	rootCmd.Version = fmt.Sprintf("%s (commit: %s, date: %s)", version, commit, date)
-}
-
-func init() {
 }

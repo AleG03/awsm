@@ -148,8 +148,11 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 		return nil, fmt.Errorf("failed to read AWS config file at %s: %w", configPath, err)
 	}
 
-	// Get current active profile
-	activeProfile := os.Getenv("AWS_PROFILE")
+	// Get current active profile from credentials file or environment
+	activeProfile := GetCurrentProfileName()
+	if activeProfile == "" {
+		activeProfile = os.Getenv("AWS_PROFILE")
+	}
 
 	var profiles []ProfileInfo
 	for _, section := range cfg.Sections() {
@@ -185,4 +188,33 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 	}
 
 	return profiles, nil
+}
+
+// GetProfileRegion gets the region for a specific profile
+func GetProfileRegion(profileName string) (string, error) {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return "", err
+	}
+
+	cfgFile, err := ini.Load(configPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read AWS config file: %w", err)
+	}
+
+	sectionName := "profile " + profileName
+	section, err := cfgFile.GetSection(sectionName)
+	if err != nil {
+		section, err = cfgFile.GetSection(profileName)
+		if err != nil {
+			return "", fmt.Errorf("could not find profile section for '%s'", profileName)
+		}
+	}
+
+	region := section.Key("region").String()
+	if region == "" {
+		return "", fmt.Errorf("no region configured for profile '%s'", profileName)
+	}
+
+	return region, nil
 }

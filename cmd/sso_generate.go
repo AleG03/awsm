@@ -19,17 +19,16 @@ import (
 )
 
 var generateCmd = &cobra.Command{
-	Use:   "generate <sso-session-name> <aws-region>",
+	Use:   "generate <sso-session-name>",
 	Short: "Generates AWS config profiles for all accessible SSO accounts and roles",
 	Long: `This powerful command logs into an SSO session, discovers all accounts and roles
 you have access to, and generates the corresponding AWS profile configurations.
 
-The generated profiles are saved to '~/.aws/aws_sso_profiles.conf'. You can then
-copy the profiles you need into your main '~/.aws/config' file.`,
-	Args: cobra.ExactArgs(2),
+The generated profiles are saved to '~/.aws/config' with us-east-1 as default region.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ssoSession := args[0]
-		awsRegion := args[1]
+		awsRegion := "us-east-1" // Default region
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("cannot find home directory: %w", err)
@@ -49,28 +48,46 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 
 		// 2. Find the cached access token from the filesystem
 		util.InfoColor.Println("Finding cached SSO access token...")
+
+		// Give the AWS CLI a moment to write the token cache
+		time.Sleep(2 * time.Second)
+
 		accessToken, err := findLatestSsoToken(filepath.Join(home, ".aws", "sso", "cache"))
 		if err != nil {
 			return fmt.Errorf("could not find cached SSO token: %w", err)
 		}
 		util.SuccessColor.Println("✔ Found access token.")
 
-		// 3. Create a basic AWS config with just the region specified.
-		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(awsRegion))
+		// 3. Create SSO client with proper region configuration
+		// First try to determine the SSO region from the session configuration
+		ssoRegion, err := getSSORegionForSession(ssoSession)
+		if err != nil {
+			util.WarnColor.Fprintf(os.Stderr, "Could not determine SSO region from session config, using %s: %v\n", awsRegion, err)
+			ssoRegion = awsRegion
+		}
+
+		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(ssoRegion))
 		if err != nil {
 			return fmt.Errorf("could not create basic AWS config: %w", err)
 		}
 		ssoClient := sso.NewFromConfig(cfg)
 
-		// 4. List Accounts using the access token
+		// 4. List Accounts using the access token with retry logic
 		util.InfoColor.Println("Fetching all accessible accounts...")
 		var accounts []*sso.ListAccountsOutput
+
+		// Add a small delay to ensure token is properly cached
+		time.Sleep(1 * time.Second)
+
 		accountsPaginator := sso.NewListAccountsPaginator(ssoClient, &sso.ListAccountsInput{
 			AccessToken: &accessToken,
 		})
 		for accountsPaginator.HasMorePages() {
 			page, err := accountsPaginator.NextPage(context.TODO())
 			if err != nil {
+				if strings.Contains(err.Error(), "UnauthorizedException") || strings.Contains(err.Error(), "401") {
+					return fmt.Errorf("failed to list accounts: Session token not found or invalid.\n\nThis usually happens when:\n1. The SSO session has expired\n2. The cached token is stale\n3. There's a region mismatch\n\nTry running the command again, or clear your SSO cache with: rm -rf ~/.aws/sso/cache/*")
+				}
 				return fmt.Errorf("failed to list accounts: %w", err)
 			}
 			accounts = append(accounts, page)
@@ -82,8 +99,24 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 		}
 		util.SuccessColor.Printf("✔ Found %d accounts.\n", totalAccounts)
 
-		// 5. Build the profiles from the discovered accounts and roles
-		var profileBuilder strings.Builder
+		// Read existing config
+		existingConfigBytes, err := os.ReadFile(outputFile)
+		existingConfig := ""
+		if err == nil {
+			existingConfig = string(existingConfigBytes)
+		}
+
+		// Parse existing profile names
+		existingProfiles := make(map[string]bool)
+		profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
+		for _, match := range profileHeaderRegex.FindAllStringSubmatch(existingConfig, -1) {
+			if len(match) > 1 {
+				existingProfiles[match[1]] = true
+			}
+		}
+
+		// Build new profiles
+		var newProfilesBuilder strings.Builder
 		cleaner := regexp.MustCompile(`[^a-zA-Z0-9-]`)
 		profileCount := 0
 
@@ -111,55 +144,10 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 
 						profileName := fmt.Sprintf("%s-%s", cleanAccountName, cleanRoleName)
 
-						profileBuilder.WriteString(fmt.Sprintf("[profile %s]\n", profileName))
-						profileBuilder.WriteString(fmt.Sprintf("sso_session = %s\n", ssoSession))
-						profileBuilder.WriteString(fmt.Sprintf("sso_account_id = %s\n", *acc.AccountId))
-						profileBuilder.WriteString(fmt.Sprintf("sso_role_name = %s\n", *role.RoleName))
-						profileBuilder.WriteString(fmt.Sprintf("region = %s\n", awsRegion))
-						profileBuilder.WriteString("\n")
-					}
-				}
-			}
-		}
-
-		// Read existing config
-		existingConfigBytes, err := os.ReadFile(outputFile)
-		existingConfig := ""
-		if err == nil {
-			existingConfig = string(existingConfigBytes)
-		}
-
-		// Parse existing profile names
-		existingProfiles := make(map[string]bool)
-		profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
-		for _, match := range profileHeaderRegex.FindAllStringSubmatch(existingConfig, -1) {
-			if len(match) > 1 {
-				existingProfiles[match[1]] = true
-			}
-		}
-
-		// Instead of writing all profiles, only append new ones
-		var newProfilesBuilder strings.Builder
-		for _, page := range accounts {
-			for _, acc := range page.AccountList {
-				for rolesPaginator := sso.NewListAccountRolesPaginator(ssoClient, &sso.ListAccountRolesInput{
-					AccessToken: &accessToken,
-					AccountId:   acc.AccountId,
-				}); rolesPaginator.HasMorePages(); {
-					rolesPage, err := rolesPaginator.NextPage(context.TODO())
-					if err != nil {
-						util.ErrorColor.Fprintf(os.Stderr, "    Could not list roles for account %s: %v\n", *acc.AccountId, err)
-						continue
-					}
-					for _, role := range rolesPage.RoleList {
-						cleanAccountName := strings.ToLower(*acc.AccountName)
-						cleanAccountName = cleaner.ReplaceAllString(cleanAccountName, "-")
-						cleanRoleName := strings.ToLower(*role.RoleName)
-						cleanRoleName = cleaner.ReplaceAllString(cleanRoleName, "-")
-						profileName := fmt.Sprintf("%s-%s", cleanAccountName, cleanRoleName)
 						if existingProfiles[profileName] {
 							continue // Skip if profile already exists
 						}
+
 						newProfilesBuilder.WriteString(fmt.Sprintf("[profile %s]\n", profileName))
 						newProfilesBuilder.WriteString(fmt.Sprintf("sso_session = %s\n", ssoSession))
 						newProfilesBuilder.WriteString(fmt.Sprintf("sso_account_id = %s\n", *acc.AccountId))
@@ -198,6 +186,50 @@ copy the profiles you need into your main '~/.aws/config' file.`,
 	},
 }
 
+func getSSORegionForSession(ssoSession string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot find home directory: %w", err)
+	}
+
+	configPath := filepath.Join(home, ".aws", "config")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("could not read AWS config file: %w", err)
+	}
+
+	configContent := string(data)
+
+	// Look for the SSO session section
+	sessionPattern := fmt.Sprintf(`\[sso-session %s\]`, regexp.QuoteMeta(ssoSession))
+	sessionRegex := regexp.MustCompile(sessionPattern)
+	sessionMatch := sessionRegex.FindStringIndex(configContent)
+	if sessionMatch == nil {
+		return "", fmt.Errorf("SSO session '%s' not found in config", ssoSession)
+	}
+
+	// Find the region within this session section
+	sessionStart := sessionMatch[1]
+	nextSectionRegex := regexp.MustCompile(`\n\[`)
+	nextSectionMatch := nextSectionRegex.FindStringIndex(configContent[sessionStart:])
+
+	var sessionEnd int
+	if nextSectionMatch != nil {
+		sessionEnd = sessionStart + nextSectionMatch[0]
+	} else {
+		sessionEnd = len(configContent)
+	}
+
+	sessionSection := configContent[sessionStart:sessionEnd]
+	regionRegex := regexp.MustCompile(`(?m)^sso_region\s*=\s*(.+)$`)
+	regionMatch := regionRegex.FindStringSubmatch(sessionSection)
+	if regionMatch != nil {
+		return strings.TrimSpace(regionMatch[1]), nil
+	}
+
+	return "", fmt.Errorf("sso_region not found in session '%s'", ssoSession)
+}
+
 func findLatestSsoToken(cacheDir string) (string, error) {
 	files, err := os.ReadDir(cacheDir)
 	if err != nil {
@@ -206,6 +238,7 @@ func findLatestSsoToken(cacheDir string) (string, error) {
 
 	var latestFile os.FileInfo
 	var latestTime time.Time
+	var validToken string
 
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".json") {
@@ -215,35 +248,52 @@ func findLatestSsoToken(cacheDir string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if info.ModTime().After(latestTime) {
-			latestTime = info.ModTime()
-			latestFile = info
+
+		// Read and parse each file to find valid access tokens
+		fullPath := filepath.Join(cacheDir, file.Name())
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+
+		// Try different token formats
+		var tokenData map[string]interface{}
+		if err := json.Unmarshal(data, &tokenData); err != nil {
+			continue
+		}
+
+		// Look for accessToken in various formats
+		var accessToken string
+		if token, ok := tokenData["accessToken"].(string); ok && token != "" {
+			accessToken = token
+		} else if token, ok := tokenData["access_token"].(string); ok && token != "" {
+			accessToken = token
+		}
+
+		// Check if token has expiration and if it's still valid
+		if accessToken != "" {
+			isValid := true
+			if expiresAt, ok := tokenData["expiresAt"].(string); ok {
+				if expTime, err := time.Parse(time.RFC3339, expiresAt); err == nil {
+					if time.Now().After(expTime) {
+						isValid = false
+					}
+				}
+			}
+
+			if isValid && info.ModTime().After(latestTime) {
+				latestTime = info.ModTime()
+				latestFile = info
+				validToken = accessToken
+			}
 		}
 	}
 
-	if latestFile == nil {
-		return "", fmt.Errorf("no valid SSO token cache file found in %s", cacheDir)
+	if latestFile == nil || validToken == "" {
+		return "", fmt.Errorf("no valid SSO token cache file found in %s.\n\nThis could mean:\n1. No SSO login has been performed\n2. All cached tokens have expired\n3. The cache directory is empty\n\nTry running 'aws sso login --sso-session <session-name>' first", cacheDir)
 	}
 
-	fullPath := filepath.Join(cacheDir, latestFile.Name())
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("could not read token file %s: %w", fullPath, err)
-	}
-
-	var tokenData struct {
-		AccessToken string `json:"accessToken"`
-	}
-
-	if err := json.Unmarshal(data, &tokenData); err != nil {
-		return "", fmt.Errorf("could not parse token file %s: %w", fullPath, err)
-	}
-
-	if tokenData.AccessToken == "" {
-		return "", fmt.Errorf("accessToken not found in token file %s", fullPath)
-	}
-
-	return tokenData.AccessToken, nil
+	return validToken, nil
 }
 
 func init() {

@@ -78,7 +78,7 @@ func handleSSOProfile(profileName string) (*aws.TempCredentials, bool, error) {
 	}
 	sdkCreds, err := awsCfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to retrieve SSO credentials: %w\nHint: Your session may have expired. Try running 'awsm sso login %s'", err, profileName)
+		return nil, false, fmt.Errorf("failed to retrieve SSO credentials: %w\nHint: Your session may have expired. Try running 'awsm profile login %s'", err, profileName)
 	}
 	return &aws.TempCredentials{
 		AccessKeyId:     sdkCreds.AccessKeyID,

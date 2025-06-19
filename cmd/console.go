@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 
+	"awsm/internal/aws"
 	"awsm/internal/browser"
 	"awsm/internal/util"
 
@@ -36,23 +37,29 @@ Use --firefox-container to open in a Firefox container matching your AWS profile
 Make sure to set a session first with 'awsmp <profile-name>'.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		util.InfoColor.Fprintln(os.Stderr, "Getting current credentials...")
+		// Auto-refresh credentials if needed
+		currentProfile := os.Getenv("AWS_PROFILE")
+		if currentProfile != "" {
+			if err := aws.AutoRefreshCredentials(currentProfile); err != nil {
+				util.WarnColor.Fprintf(os.Stderr, "Auto-refresh failed: %v\n", err)
+			}
+		}
+
 		awsCfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
-			return fmt.Errorf("failed to load AWS config: %w. Have you exported credentials?", err)
+			return fmt.Errorf("failed to load AWS config: %w. Have you set credentials?", err)
 		}
 		creds, err := awsCfg.Credentials.Retrieve(context.TODO())
 		if err != nil {
-			return fmt.Errorf("failed to retrieve credentials: %w. Have you exported credentials?", err)
+			return fmt.Errorf("failed to retrieve credentials: %w. Have you set credentials?", err)
 		}
 		if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
-			return fmt.Errorf("could not find active AWS credentials. Please run 'awsmp <profile-name>' first")
+			return fmt.Errorf("could not find active AWS credentials. Please run 'awsm profile set <profile-name>' first")
 		}
 		sessionJSON, err := json.Marshal(map[string]string{"sessionId": creds.AccessKeyID, "sessionKey": creds.SecretAccessKey, "sessionToken": creds.SessionToken})
 		if err != nil {
 			return fmt.Errorf("failed to create session JSON: %w", err)
 		}
-		util.InfoColor.Fprintln(os.Stderr, "Requesting sign-in token from AWS...")
 		reqURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=getSigninToken&Session=%s", url.QueryEscape(string(sessionJSON)))
 		resp, err := http.Get(reqURL)
 		if err != nil {
@@ -84,26 +91,26 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 		loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
 
 		if dontOpenBrowser {
-			util.SuccessColor.Fprintln(os.Stderr, "✔ Console URL generated successfully!")
 			fmt.Println(loginURL)
 		} else {
-			util.InfoColor.Fprintln(os.Stderr, "Opening AWS Console...")
-
 			// If --firefox-container is used, get the current AWS profile name
 			var firefoxContainer string
 			if useFirefox {
 				firefoxContainer = os.Getenv("AWS_PROFILE")
 				if firefoxContainer == "" {
-					return fmt.Errorf("no AWS profile set. Please run 'awsmp <profile-name>' first")
+					// Fallback to checking credentials file
+					firefoxContainer = aws.GetCurrentProfileName()
+					if firefoxContainer == "" {
+						return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first")
+					}
 				}
 			}
 
 			if err := browser.OpenURL(loginURL, chromeProfile, firefoxContainer); err != nil {
-				util.ErrorColor.Fprintf(os.Stderr, "Could not open browser automatically. Please copy this URL:\n")
+				fmt.Fprintln(os.Stderr, "Could not open browser automatically. Please copy this URL:")
 				fmt.Println(loginURL)
 				return fmt.Errorf("could not open browser: %w", err)
 			}
-			util.SuccessColor.Fprintln(os.Stderr, "✔ AWS Console opened.")
 		}
 
 		return nil

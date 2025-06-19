@@ -1,56 +1,77 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 
 	"awsm/internal/aws"
-	"awsm/internal/util"
+	"awsm/internal/tui"
 
 	"github.com/spf13/cobra"
 )
 
 // --- Command Definitions ---
 
-var exportCmd = &cobra.Command{
-	Use:               "export <profile>",
-	Short:             "Export temporary credentials for a profile (IAM or SSO)",
-	Long:              `This is the main plumbing command used by the 'awsmp' shell alias.`,
+var profileSetCmd = &cobra.Command{
+	Use:               "set <profile>",
+	Short:             "Set credentials for a profile in the default AWS credentials file",
+	Long:              `Updates the default profile in ~/.aws/credentials with the specified profile's credentials.`,
 	Args:              cobra.ExactArgs(1),
-	RunE:              runExport,
+	RunE:              runProfileSet,
 	ValidArgsFunction: completeProfiles,
 }
 
 // --- Main Logic ---
 
-func runExport(cmd *cobra.Command, args []string) error {
+func runProfileSet(cmd *cobra.Command, args []string) error {
 	profileName := args[0]
 
-	creds, isStatic, err := aws.GetCredentialsForProfile(profileName)
+	// Get profile region first
+	region, err := aws.GetProfileRegion(profileName)
+	if err != nil {
+		// Region is optional, continue without it
+		region = ""
+	}
+
+	// Use spinner for credential acquisition
+	var creds *aws.TempCredentials
+	var isStatic bool
+
+	err = tui.ShowSpinner(context.Background(), fmt.Sprintf("Getting credentials for profile '%s'", profileName), func() error {
+		var spinnerErr error
+		creds, isStatic, spinnerErr = aws.GetCredentialsForProfile(profileName)
+		return spinnerErr
+	})
+
 	if err != nil {
 		if errors.Is(err, aws.ErrSsoSessionExpired) {
-			fmt.Fprintln(os.Stderr, util.WarnColor.Sprintf("SSO session for profile '%s' has expired. Please log in again.", profileName))
+			fmt.Fprintln(os.Stderr, tui.WarningStyle.Render("⚠ SSO session for profile '"+profileName+"' has expired. Please log in again."))
 			os.Exit(10) // Exit with special code 10 to signal the shell wrapper.
 			return nil
 		}
-		fmt.Fprintln(os.Stderr, util.ErrorColor.Sprintf("Error: %v", err))
+		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: "+err.Error()))
 		return fmt.Errorf("credential acquisition failed")
 	}
 
 	if isStatic {
-		fmt.Printf("export AWS_PROFILE='%s';\n", profileName)
-		fmt.Println("unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN;")
-		util.SuccessColor.Fprintf(os.Stderr, "✔ Switched to profile '%s'.\n", profileName)
+		err = aws.UpdateStaticProfile(profileName)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error updating credentials file: "+err.Error()))
+			return fmt.Errorf("failed to update credentials file")
+		}
+		fmt.Fprintln(os.Stderr, tui.SuccessStyle.Render("✓ Switched to profile '"+profileName+"' in default credentials."))
 		return nil
 	}
 
-	fmt.Printf("export AWS_ACCESS_KEY_ID='%s';\n", creds.AccessKeyId)
-	fmt.Printf("export AWS_SECRET_ACCESS_KEY='%s';\n", creds.SecretAccessKey)
-	fmt.Printf("export AWS_SESSION_TOKEN='%s';\n", creds.SessionToken)
-	fmt.Printf("export AWS_PROFILE='%s';\n", profileName)
+	err = aws.UpdateCredentialsFile(creds, region, profileName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error updating credentials file: "+err.Error()))
+		return fmt.Errorf("failed to update credentials file")
+	}
 
-	util.SuccessColor.Fprintf(os.Stderr, "✔ Credentials for profile '%s' are set.\n", profileName)
+	fmt.Fprintln(os.Stderr, tui.SuccessStyle.Render("✓ Credentials for profile '"+profileName+"' are set."))
 	return nil
 }
 
@@ -70,5 +91,5 @@ func completeProfiles(cmd *cobra.Command, args []string, toComplete string) ([]s
 // --- Initialization ---
 
 func init() {
-	rootCmd.AddCommand(exportCmd)
+	// Command will be added to profile subcommand instead
 }

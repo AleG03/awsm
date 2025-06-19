@@ -1,3 +1,11 @@
+/*
+AWSM - AWS Manager
+Copyright (c) 2024 Alessandro Gallo. All rights reserved.
+
+Licensed under the Business Source License 1.1.
+See LICENSE file for full terms.
+*/
+
 package main
 
 import (
@@ -5,7 +13,6 @@ import (
 	"awsm/internal/config"
 )
 
-// These variables are set by GoReleaser at build time.
 var (
 	version = "dev"
 	commit  = "none"
@@ -13,10 +20,7 @@ var (
 )
 
 func main() {
-	// Initialize configuration before doing anything else.
 	config.InitConfig()
-
-	// Pass the version info into the cmd package
 	cmd.SetVersionInfo(version, commit, date)
 	cmd.Execute()
 }

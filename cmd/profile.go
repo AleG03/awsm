@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
 
@@ -49,6 +51,36 @@ var profileCmd = &cobra.Command{
 	Use:     "profile",
 	Short:   "Manage AWS profiles",
 	Aliases: []string{"p"},
+}
+
+var profileLoginCmd = &cobra.Command{
+	Use:   "login <profile>",
+	Short: "Log in to SSO session and set profile",
+	Long:  `Logs in to the SSO session for the specified profile and automatically sets it as active.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		profileName := args[0]
+		ssoSession, err := aws.GetSsoSessionForProfile(profileName)
+		if err != nil {
+			return err
+		}
+
+		util.InfoColor.Fprintf(os.Stderr, "Attempting SSO login for session: %s\n", util.BoldColor.Sprint(ssoSession))
+		util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
+
+		awsCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
+		awsCmd.Stdin = os.Stdin
+		awsCmd.Stdout = os.Stderr
+		awsCmd.Stderr = os.Stderr
+
+		if err := awsCmd.Run(); err != nil {
+			return fmt.Errorf("aws sso login failed: %w", err)
+		}
+		util.SuccessColor.Fprintln(os.Stderr, "\n✔ SSO login successful.")
+
+		// Now set the profile
+		return runProfileSet(cmd, []string{profileName})
+	},
 }
 
 var profileListCmd = &cobra.Command{
@@ -189,8 +221,15 @@ func colorizeProfileType(pType aws.ProfileType) string {
 
 func printSimpleProfiles(profiles []aws.ProfileInfo) {
 	fmt.Println()
-	util.InfoColor.Println("AWS Profiles")
-	util.InfoColor.Println("═══════════")
+
+	// Enhanced header with emoji and styling
+	headerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00D9FF")).
+		Bold(true).
+		Padding(1, 0)
+
+	fmt.Println(headerStyle.Render("🚀 AWS Profiles"))
+	fmt.Println(headerStyle.Render("═══════════"))
 	fmt.Println()
 
 	var ssoProfiles, iamProfiles, keyProfiles []aws.ProfileInfo
@@ -205,32 +244,77 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 		}
 	}
 
-	// Print SSO Profiles
+	// Group SSO profiles by session
 	if len(ssoProfiles) > 0 {
-		util.SuccessColor.Println("● SSO Profiles")
+		ssoSessions := make(map[string][]aws.ProfileInfo)
 		for _, p := range ssoProfiles {
-			fmt.Print("  ")
-			if p.IsActive {
-				util.SuccessColor.Print("▶ ")
-			} else {
-				fmt.Print("  ")
+			session := p.SSOSession
+			if session == "" {
+				session = "Unknown Session"
 			}
-			fmt.Printf("%s ", p.Name)
-			if p.SSOAccountID != "" {
-				util.InfoColor.Printf("(%s) ", p.SSOAccountID)
-			}
-			util.WarnColor.Printf("[%s]\n", p.Region)
+			ssoSessions[session] = append(ssoSessions[session], p)
 		}
-		fmt.Println()
+
+		ssoStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#10B981")).
+			Bold(true)
+
+		sessionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7C3AED")).
+			Bold(true)
+
+		activeStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#10B981")).
+			Bold(true)
+
+		accountStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00D9FF"))
+
+		regionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B"))
+
+		fmt.Println(ssoStyle.Render("● SSO Profiles"))
+
+		for session, sessionProfiles := range ssoSessions {
+			fmt.Printf("  %s\n", sessionStyle.Render("📁 "+session))
+			for _, p := range sessionProfiles {
+				fmt.Print("    ")
+				if p.IsActive {
+					fmt.Print(activeStyle.Render("▶ "))
+				} else {
+					fmt.Print("  ")
+				}
+				fmt.Printf("%s ", p.Name)
+				if p.SSOAccountID != "" {
+					fmt.Printf("%s ", accountStyle.Render("("+p.SSOAccountID+")"))
+				}
+				fmt.Printf("%s\n", regionStyle.Render("["+p.Region+"]"))
+			}
+			fmt.Println()
+		}
 	}
 
-	// Print IAM Profiles
+	// Enhanced IAM Profiles section
 	if len(iamProfiles) > 0 {
-		util.InfoColor.Println("● IAM Role Profiles")
+		iamStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7C3AED")).
+			Bold(true)
+
+		activeStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#10B981")).
+			Bold(true)
+
+		accountStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00D9FF"))
+
+		regionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B"))
+
+		fmt.Println(iamStyle.Render("● IAM Role Profiles"))
 		for _, p := range iamProfiles {
 			fmt.Print("  ")
 			if p.IsActive {
-				util.SuccessColor.Print("▶ ")
+				fmt.Print(activeStyle.Render("▶ "))
 			} else {
 				fmt.Print("  ")
 			}
@@ -238,26 +322,37 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 			if p.RoleARN != "" {
 				parts := strings.Split(p.RoleARN, ":")
 				if len(parts) >= 5 {
-					util.InfoColor.Printf("(%s) ", parts[4])
+					fmt.Printf("%s ", accountStyle.Render("("+parts[4]+")"))
 				}
 			}
-			util.WarnColor.Printf("[%s]\n", p.Region)
+			fmt.Printf("%s\n", regionStyle.Render("["+p.Region+"]"))
 		}
 		fmt.Println()
 	}
 
-	// Print Key Profiles
+	// Enhanced Key Profiles section
 	if len(keyProfiles) > 0 {
-		util.WarnColor.Println("● Static Key Profiles")
+		keyStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B")).
+			Bold(true)
+
+		activeStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#10B981")).
+			Bold(true)
+
+		regionStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F59E0B"))
+
+		fmt.Println(keyStyle.Render("● Static Key Profiles"))
 		for _, p := range keyProfiles {
 			fmt.Print("  ")
 			if p.IsActive {
-				util.SuccessColor.Print("▶ ")
+				fmt.Print(activeStyle.Render("▶ "))
 			} else {
 				fmt.Print("  ")
 			}
 			fmt.Printf("%s ", p.Name)
-			util.WarnColor.Printf("[%s]\n", p.Region)
+			fmt.Printf("%s\n", regionStyle.Render("["+p.Region+"]"))
 		}
 		fmt.Println()
 	}
@@ -338,6 +433,8 @@ func init() {
 	profileListCmd.Flags().BoolVarP(&showHelp, "help-types", "H", false, "Show help about profile types")
 	profileListCmd.Flags().BoolVarP(&outputJSON, "json", "j", false, "Output profiles in JSON format")
 
+	profileCmd.AddCommand(profileLoginCmd)
+	profileCmd.AddCommand(profileSetCmd)
 	profileCmd.AddCommand(profileListCmd)
 	rootCmd.AddCommand(profileCmd)
 }
