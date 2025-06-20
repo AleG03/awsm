@@ -22,12 +22,11 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:               "awsm",
-	Short:             "A fancy CLI to manage your AWS profiles and sessions",
-	Long:              `AWSM (AWS Manager) is a tool to simplify switching between AWS profiles, managing regions, and assuming roles with MFA.`,
-	Version:           version,
-	SilenceUsage:      true,
-	CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+	Use:          "awsm",
+	Short:        "A fancy CLI to manage your AWS profiles and sessions",
+	Long:         `AWSM (AWS Manager) is a tool to simplify switching between AWS profiles, managing regions, and assuming roles with MFA.`,
+	Version:      version,
+	SilenceUsage: true,
 }
 
 func Execute() {

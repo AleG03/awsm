@@ -4,13 +4,15 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 
 ## Features
 
-- **Profile Management**: Easily switch between AWS profiles
-- **SSO Support**: Seamless integration with AWS SSO
-- **MFA Support**: Streamlined MFA token handling
+- **Profile Management**: Easily switch between AWS profiles with interactive selection
+- **SSO Support**: Complete AWS SSO (IAM Identity Center) integration
+- **MFA Support**: Streamlined MFA token handling for IAM profiles
 - **Auto-refresh**: Automatic credential refresh when needed
 - **Console Access**: Open the AWS console in your browser with proper credentials
 - **Region Management**: Easily switch between AWS regions
 - **Browser Integration**: Open the console in specific Chrome profiles or Firefox containers
+- **Shell Completion**: Full autocompletion support for bash, zsh, fish, and PowerShell
+- **Interactive UI**: Beautiful terminal interface with responsive design
 
 ## Installation
 
@@ -34,61 +36,89 @@ go build -o awsm .
 # List all profiles
 awsm profile list
 
+# List profiles with detailed information
+awsm profile list --detailed
+
 # Set active profile
 awsm profile set my-profile
 
-# Show detailed profile info
-awsm profile list --detailed
+# Login to SSO profile and set as active
+awsm profile login my-sso-profile
+
+# Change default region for a profile
+awsm profile change-default-region my-profile eu-central-1
 ```
 
-### Fancy Profile Management
+### Interactive Profile Selection
 
 ```bash
-# List all profiles and select one using arrows
+# Interactive profile selector with arrow keys
 awsm select
 ```
 
 ### SSO Management
 
 ```bash
-# Login to SSO
-awsm sso login my-sso-profile
+# Add SSO session to config
+awsm sso add my-session https://d-123456789.awsapps.com/start/ us-east-1
 
-# Generate profiles from SSO
+# Login to SSO session
+awsm sso login my-sso-session
+
+# Generate profiles from SSO (discovers all accounts/roles)
 awsm sso generate my-sso-session
 ```
 
 ### Credential Management
 
 ```bash
-# Refresh credentials
+# Refresh credentials for current or specified profile
 awsm refresh [profile-name]
 
-# Clear credentials
-awsm clear [profile-name]
+# Clear all credentials from default profile
+awsm clear
 ```
 
 ### Console Access
 
 ```bash
-# Open AWS console in browser
+# Open AWS console in default browser
 awsm console
 
-# Open in Firefox container
+# Open in Firefox container (uses profile name as container)
 awsm console --firefox-container
 
-# Open in Chrome profile
+# Open in specific Chrome profile
 awsm console --chrome-profile work
+
+# Just print the URL without opening browser
+awsm console --no-open
 ```
 
 ### Region Management
 
 ```bash
-# List available regions
+# List all available AWS regions
 awsm region list
 
-# Set region
+# Set region for default profile
 awsm region set us-west-2
+```
+
+### Shell Completion
+
+```bash
+# Generate completion script for your shell
+awsm completion bash   # or zsh, fish, powershell
+
+# Install bash completion (Linux)
+awsm completion bash > /etc/bash_completion.d/awsm
+
+# Install bash completion (macOS)
+awsm completion bash > $(brew --prefix)/etc/bash_completion.d/awsm
+
+# Install zsh completion
+awsm completion zsh > ~/.zsh/completions/_awsm
 ```
 
 ### Software Update
@@ -113,6 +143,33 @@ work = "Profile 1"
 personal = "Profile 2"
 ```
 
+### Profile Types
+
+AWSM supports three types of AWS profiles:
+
+- **SSO Profiles**: Use AWS IAM Identity Center for authentication
+- **IAM Profiles**: Use IAM roles with MFA for authentication
+- **Static Profiles**: Use long-term access keys (not recommended for production)
+
+### Example SSO Session Configuration
+
+```ini
+[sso-session my-company]
+sso_start_url = https://d-123456789.awsapps.com/start/
+sso_region = us-east-1
+sso_registration_scopes = sso:account:access
+```
+
+### Example Profile Configuration
+
+```ini
+[profile my-company-admin]
+sso_session = my-company
+sso_account_id = 123456789012
+sso_role_name = AdministratorAccess
+region = us-east-1
+```
+
 ## License
 
 This project is licensed under the Business Source License 1.1.
@@ -125,8 +182,36 @@ See the [LICENSE](LICENSE) file for details.
 
 For commercial licensing before 2028, please contact gc.ale03@gmail.com.
 
+## Key Features in Detail
+
+### Interactive Profile Selector
+- Responsive terminal UI that adapts to your terminal size
+- Color-coded profile types (SSO, IAM, Static)
+- Shows account IDs, regions, and active status
+- Filter and search capabilities
+
+### Smart Credential Management
+- Automatic credential refresh for expired sessions
+- Preserves profile context when switching regions
+- Tracks active profile in default credentials
+- Handles both temporary and static credentials
+
+### Browser Integration
+- Generates federated sign-in URLs for AWS Console
+- Chrome profile support with custom aliases
+- Firefox Multi-Account Container integration
+- Automatic region detection for console URLs
+
+### Shell Completion
+- Tab completion for all commands and flags
+- Profile name completion for relevant commands
+- Works with bash, zsh, fish, and PowerShell
+- Easy installation with generated scripts
+
 ## Acknowledgments
 
 - [AWS SDK for Go](https://github.com/aws/aws-sdk-go-v2)
 - [Cobra](https://github.com/spf13/cobra)
 - [Viper](https://github.com/spf13/viper)
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss)

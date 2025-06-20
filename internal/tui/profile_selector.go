@@ -75,7 +75,20 @@ func (m ProfileSelectorModel) Init() tea.Cmd {
 func (m ProfileSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.list.SetWidth(msg.Width)
+		// Use most of the terminal space with minimal padding
+		width := msg.Width - 2
+		height := msg.Height - 4
+
+		// Set minimum constraints only
+		if width < 40 {
+			width = 40
+		}
+		if height < 10 {
+			height = 10
+		}
+
+		m.list.SetWidth(width)
+		m.list.SetHeight(height)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -120,7 +133,7 @@ func SelectProfile() (string, error) {
 	}
 
 	model := NewProfileSelector(profiles)
-	program := tea.NewProgram(model)
+	program := tea.NewProgram(model, tea.WithAltScreen())
 
 	finalModel, err := program.Run()
 	if err != nil {

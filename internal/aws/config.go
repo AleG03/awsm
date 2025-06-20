@@ -218,3 +218,71 @@ func GetProfileRegion(profileName string) (string, error) {
 
 	return region, nil
 }
+
+// AddSSOSession adds a new SSO session to the AWS config file
+func AddSSOSession(sessionName, startURL, region string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	// Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// Load or create config file
+	var cfg *ini.File
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		cfg = ini.Empty()
+	} else {
+		cfg, err = ini.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config file: %w", err)
+		}
+	}
+
+	// Create SSO session section
+	sectionName := fmt.Sprintf("sso-session %s", sessionName)
+	section, err := cfg.NewSection(sectionName)
+	if err != nil {
+		return fmt.Errorf("failed to create SSO session section: %w", err)
+	}
+
+	// Set SSO session properties
+	section.Key("sso_start_url").SetValue(startURL)
+	section.Key("sso_region").SetValue(region)
+	section.Key("sso_registration_scopes").SetValue("sso:account:access")
+
+	return cfg.SaveTo(configPath)
+}
+
+// ChangeProfileRegion changes the region for a specific profile
+func ChangeProfileRegion(profileName, region string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config file: %w", err)
+	}
+
+	// Try to find the profile section
+	sectionName := "profile " + profileName
+	section, err := cfg.GetSection(sectionName)
+	if err != nil {
+		// Fallback for profiles without the "profile " prefix
+		section, err = cfg.GetSection(profileName)
+		if err != nil {
+			return fmt.Errorf("could not find profile section for '%s'", profileName)
+		}
+	}
+
+	// Update the region
+	section.Key("region").SetValue(region)
+
+	return cfg.SaveTo(configPath)
+}
