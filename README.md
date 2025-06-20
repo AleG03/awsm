@@ -59,7 +59,7 @@ awsm select
 ### SSO Management
 
 ```bash
-# Add SSO session to config
+# Add SSO session to config and automatically generate profiles
 awsm sso add my-session https://d-123456789.awsapps.com/start/ us-east-1
 
 # Login to SSO session

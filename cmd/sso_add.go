@@ -32,7 +32,10 @@ sso_registration_scopes = sso:account:access`,
 		}
 
 		util.SuccessColor.Printf("✔ SSO session '%s' added successfully to ~/.aws/config\n", sessionName)
-		return nil
+
+		// Automatically generate profiles for the new SSO session
+		util.InfoColor.Println("\nGenerating profiles for SSO session...")
+		return runSSOGenerate(sessionName)
 	},
 }
 
