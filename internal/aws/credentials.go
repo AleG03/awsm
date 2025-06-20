@@ -273,7 +273,18 @@ func GetCurrentProfileName() string {
 		return ""
 	}
 
-	// Read file directly to parse comment
+	// Try to load with ini first (faster)
+	cfg, err := ini.Load(credentialsPath)
+	if err == nil {
+		section, err := cfg.GetSection("default")
+		if err == nil {
+			if section.HasKey("# source_profile") {
+				return section.Key("# source_profile").String()
+			}
+		}
+	}
+
+	// Fallback to manual parsing for edge cases
 	file, err := os.Open(credentialsPath)
 	if err != nil {
 		return ""
@@ -384,6 +395,9 @@ func SetRegion(region string) error {
 		return err
 	}
 
+	// Get current source profile name to preserve it
+	currentSourceProfile := GetCurrentProfileName()
+
 	// Create .aws directory if it doesn't exist
 	awsDir := filepath.Dir(credentialsPath)
 	if err := os.MkdirAll(awsDir, 0755); err != nil {
@@ -412,6 +426,11 @@ func SetRegion(region string) error {
 
 	// Update region
 	section.Key("region").SetValue(region)
+
+	// Preserve the source profile comment if it exists
+	if currentSourceProfile != "" {
+		section.Key("# source_profile").SetValue(currentSourceProfile)
+	}
 
 	// Save the file
 	return cfg.SaveTo(credentialsPath)
