@@ -16,12 +16,12 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 
 ### From Releases
 
-Download the latest release for your platform from the [Releases page](https://github.com/yourusername/awsm/releases).
+Download the latest release for your platform from the [Releases page](https://github.com/AleG03/awsm/releases).
 
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/awsm.git
+git clone https://github.com/AleG03/awsm.git
 cd awsm
 go build -o awsm .
 ```
@@ -41,6 +41,13 @@ awsm profile set my-profile
 awsm profile list --detailed
 ```
 
+### Fancy Profile Management
+
+```bash
+# List all profiles and select one using arrows
+awsm select
+```
+
 ### SSO Management
 
 ```bash
@@ -57,8 +64,8 @@ awsm sso generate my-sso-session
 # Refresh credentials
 awsm refresh [profile-name]
 
-# Export credentials to shell
-eval $(awsm export)
+# Clear credentials
+awsm clear [profile-name]
 ```
 
 ### Console Access
@@ -82,6 +89,13 @@ awsm region list
 
 # Set region
 awsm region set us-west-2
+```
+
+### Software Update
+
+```bash
+# Update to latest version
+sudo awsm update
 ```
 
 ## Configuration

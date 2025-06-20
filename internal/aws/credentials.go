@@ -435,3 +435,30 @@ func SetRegion(region string) error {
 	// Save the file
 	return cfg.SaveTo(credentialsPath)
 }
+
+// ClearDefaultProfile removes all credentials and region from the default profile
+func ClearDefaultProfile() error {
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := ini.Load(credentialsPath)
+	if err != nil {
+		return fmt.Errorf("failed to load credentials file: %w", err)
+	}
+
+	section, err := cfg.GetSection("default")
+	if err != nil {
+		return nil // No default section exists, nothing to clear
+	}
+
+	// Remove all keys from default section
+	section.DeleteKey("aws_access_key_id")
+	section.DeleteKey("aws_secret_access_key")
+	section.DeleteKey("aws_session_token")
+	section.DeleteKey("region")
+	section.DeleteKey("# source_profile")
+
+	return cfg.SaveTo(credentialsPath)
+}
