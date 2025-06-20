@@ -286,3 +286,44 @@ func ChangeProfileRegion(profileName, region string) error {
 
 	return cfg.SaveTo(configPath)
 }
+
+// SSOSessionInfo contains information about an SSO session
+type SSOSessionInfo struct {
+	Name     string
+	StartURL string
+	Region   string
+	Scopes   string
+}
+
+// ListSSOSessions returns all SSO sessions from the AWS config
+func ListSSOSessions() ([]SSOSessionInfo, error) {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []SSOSessionInfo{}, nil
+		}
+		return nil, fmt.Errorf("failed to read AWS config file: %w", err)
+	}
+
+	var sessions []SSOSessionInfo
+	for _, section := range cfg.Sections() {
+		name := section.Name()
+		if strings.HasPrefix(name, "sso-session ") {
+			sessionName := strings.TrimPrefix(name, "sso-session ")
+			session := SSOSessionInfo{
+				Name:     sessionName,
+				StartURL: section.Key("sso_start_url").String(),
+				Region:   section.Key("sso_region").String(),
+				Scopes:   section.Key("sso_registration_scopes").String(),
+			}
+			sessions = append(sessions, session)
+		}
+	}
+
+	return sessions, nil
+}

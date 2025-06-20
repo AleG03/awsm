@@ -67,6 +67,12 @@ awsm sso login my-sso-session
 
 # Generate profiles from SSO (discovers all accounts/roles)
 awsm sso generate my-sso-session
+
+# List all SSO Sessions
+awsm sso list
+
+# List SSO Sessions with detailed information
+awsm sso list --detailed
 ```
 
 ### Credential Management
@@ -114,11 +120,16 @@ awsm completion bash   # or zsh, fish, powershell
 # Install bash completion (Linux)
 awsm completion bash > /etc/bash_completion.d/awsm
 
-# Install bash completion (macOS)
-awsm completion bash > $(brew --prefix)/etc/bash_completion.d/awsm
-
-# Install zsh completion
+# Install zsh completion (create directory first if needed)
+mkdir -p ~/.zsh/completions
 awsm completion zsh > ~/.zsh/completions/_awsm
+# Add to your ~/.zshrc (if not already present)
+echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
+echo 'autoload -U compinit && compinit' >> ~/.zshrc
+
+# Alternative: Use system zsh completion directory (macOS)
+sudo mkdir -p /usr/local/share/zsh/site-functions
+sudo awsm completion zsh > /usr/local/share/zsh/site-functions/_awsm
 ```
 
 ### Software Update

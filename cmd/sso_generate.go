@@ -147,7 +147,11 @@ func runSSOGenerate(ssoSession string) error {
 					profileName := fmt.Sprintf("%s-%s", cleanAccountName, cleanRoleName)
 
 					if existingProfiles[profileName] {
-						continue // Skip if profile already exists
+						resolvedName, skip := resolveProfileConflict(profileName, *acc.AccountId, ssoSession)
+						if skip {
+							continue
+						}
+						profileName = resolvedName
 					}
 
 					newProfilesBuilder.WriteString(fmt.Sprintf("[profile %s]\n", profileName))
@@ -299,6 +303,39 @@ func findLatestSsoToken(cacheDir string) (string, error) {
 	}
 
 	return validToken, nil
+}
+
+func resolveProfileConflict(profileName, accountId, ssoSession string) (string, bool) {
+	util.WarnColor.Printf("\n⚠ Profile '%s' already exists.\n", profileName)
+	fmt.Println("Choose resolution:")
+	fmt.Println("1. Skip this profile")
+	fmt.Printf("2. Rename to '%s-%s'\n", profileName, accountId)
+	fmt.Printf("3. Rename to '%s-%s'\n", profileName, ssoSession)
+	fmt.Println("4. Enter custom name")
+	fmt.Print("\nEnter choice (1-4): ")
+
+	choice, err := util.PromptForInput("")
+	if err != nil {
+		return "", true
+	}
+
+	switch strings.TrimSpace(choice) {
+	case "1":
+		return "", true
+	case "2":
+		return fmt.Sprintf("%s-%s", profileName, accountId), false
+	case "3":
+		return fmt.Sprintf("%s-%s", profileName, ssoSession), false
+	case "4":
+		customName, err := util.PromptForInput("Enter new profile name: ")
+		if err != nil || strings.TrimSpace(customName) == "" {
+			return "", true
+		}
+		return strings.TrimSpace(customName), false
+	default:
+		util.WarnColor.Println("Invalid choice. Skipping profile.")
+		return "", true
+	}
 }
 
 func init() {
