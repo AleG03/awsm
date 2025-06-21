@@ -120,6 +120,8 @@ type ProfileInfo struct {
 	SSOSession    string
 	MFASerial     string
 	IsActive      bool
+	AccessKey     string `json:"access_key,omitempty"`
+	SecretKey     string `json:"secret_key,omitempty"`
 }
 
 // GetProfileType determines the type of AWS profile based on its configuration
@@ -182,6 +184,19 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 			SSOSession:    section.Key("sso_session").String(),
 			MFASerial:     section.Key("mfa_serial").String(),
 			IsActive:      profileName == activeProfile,
+		}
+
+		// For IAM user profiles, get credentials from credentials file
+		if profile.Type == ProfileTypeKey {
+			credentialsPath, err := GetAWSCredentialsPath()
+			if err == nil {
+				if credCfg, err := ini.Load(credentialsPath); err == nil {
+					if credSection, err := credCfg.GetSection(profileName); err == nil {
+						profile.AccessKey = credSection.Key("aws_access_key_id").String()
+						profile.SecretKey = credSection.Key("aws_secret_access_key").String()
+					}
+				}
+			}
 		}
 
 		profiles = append(profiles, profile)
@@ -326,4 +341,383 @@ func ListSSOSessions() ([]SSOSessionInfo, error) {
 	}
 
 	return sessions, nil
+}
+
+// AddIAMUserProfile adds a new IAM user profile with static credentials
+func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
+	// Add credentials to credentials file
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	// Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(credentialsPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// Load or create credentials file
+	var credCfg *ini.File
+	if _, err := os.Stat(credentialsPath); os.IsNotExist(err) {
+		credCfg = ini.Empty()
+	} else {
+		credCfg, err = ini.Load(credentialsPath)
+		if err != nil {
+			return fmt.Errorf("failed to load credentials file: %w", err)
+		}
+	}
+
+	// Create profile section in credentials
+	credSection, err := credCfg.NewSection(profileName)
+	if err != nil {
+		return fmt.Errorf("failed to create profile section: %w", err)
+	}
+
+	credSection.Key("aws_access_key_id").SetValue(accessKey)
+	credSection.Key("aws_secret_access_key").SetValue(secretKey)
+
+	if err := saveCredentialsWithDefaultLast(credCfg, credentialsPath); err != nil {
+		return err
+	}
+
+	// Add profile to config file if region is specified
+	if region != "" {
+		configPath, err := GetAWSConfigPath()
+		if err != nil {
+			return err
+		}
+
+		// Load or create config file
+		var configCfg *ini.File
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			configCfg = ini.Empty()
+		} else {
+			configCfg, err = ini.Load(configPath)
+			if err != nil {
+				return fmt.Errorf("failed to load config file: %w", err)
+			}
+		}
+
+		// Create profile section in config
+		configSectionName := fmt.Sprintf("profile %s", profileName)
+		configSection, err := configCfg.NewSection(configSectionName)
+		if err != nil {
+			return fmt.Errorf("failed to create config profile section: %w", err)
+		}
+
+		configSection.Key("region").SetValue(region)
+
+		if err := configCfg.SaveTo(configPath); err != nil {
+			return fmt.Errorf("failed to save config file: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// AddIAMRoleProfile adds a new IAM role profile
+func AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	// Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// Load or create config file
+	var cfg *ini.File
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		cfg = ini.Empty()
+	} else {
+		cfg, err = ini.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config file: %w", err)
+		}
+	}
+
+	// Create profile section
+	sectionName := fmt.Sprintf("profile %s", profileName)
+	section, err := cfg.NewSection(sectionName)
+	if err != nil {
+		return fmt.Errorf("failed to create profile section: %w", err)
+	}
+
+	section.Key("role_arn").SetValue(roleArn)
+	if sourceProfile != "" {
+		section.Key("source_profile").SetValue(sourceProfile)
+	}
+	if mfaSerial != "" {
+		section.Key("mfa_serial").SetValue(mfaSerial)
+	}
+	if region != "" {
+		section.Key("region").SetValue(region)
+	}
+
+	return cfg.SaveTo(configPath)
+}
+
+// DeleteProfile removes a profile from both config and credentials files
+func DeleteProfile(profileName string) error {
+	// Delete from config file
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		cfg, err := ini.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config file: %w", err)
+		}
+
+		// Try both profile formats
+		sectionNames := []string{fmt.Sprintf("profile %s", profileName), profileName}
+		for _, sectionName := range sectionNames {
+			if cfg.HasSection(sectionName) {
+				cfg.DeleteSection(sectionName)
+				break
+			}
+		}
+
+		if err := cfg.SaveTo(configPath); err != nil {
+			return fmt.Errorf("failed to save config file: %w", err)
+		}
+	}
+
+	// Delete from credentials file
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(credentialsPath); !os.IsNotExist(err) {
+		cfg, err := ini.Load(credentialsPath)
+		if err != nil {
+			return fmt.Errorf("failed to load credentials file: %w", err)
+		}
+
+		if cfg.HasSection(profileName) {
+			cfg.DeleteSection(profileName)
+			return saveCredentialsWithDefaultLast(cfg, credentialsPath)
+		}
+	}
+
+	return nil
+}
+
+// DeleteSSOSession removes an SSO session from config file
+func DeleteSSOSession(sessionName string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config file: %w", err)
+	}
+
+	sectionName := fmt.Sprintf("sso-session %s", sessionName)
+	if cfg.HasSection(sectionName) {
+		cfg.DeleteSection(sectionName)
+	}
+
+	return cfg.SaveTo(configPath)
+}
+
+// GetProfilesBySSO returns all profiles that use a specific SSO session
+func GetProfilesBySSO(ssoSession string) ([]string, error) {
+	profiles, err := ListProfilesDetailed()
+	if err != nil {
+		return nil, err
+	}
+
+	var ssoProfiles []string
+	for _, profile := range profiles {
+		if profile.Type == ProfileTypeSSO && profile.SSOSession == ssoSession {
+			ssoProfiles = append(ssoProfiles, profile.Name)
+		}
+	}
+
+	return ssoProfiles, nil
+}
+
+// UpdateProfileRegion updates the region for a profile
+func UpdateProfileRegion(profileName, region string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config file: %w", err)
+	}
+
+	sectionName := fmt.Sprintf("profile %s", profileName)
+	section := cfg.Section(sectionName)
+	if section == nil {
+		section = cfg.Section(profileName)
+	}
+
+	section.Key("region").SetValue(region)
+	return cfg.SaveTo(configPath)
+}
+
+// OrphanedProfile represents a profile that should be cleaned up
+type OrphanedProfile struct {
+	Name   string
+	Reason string
+}
+
+// FindOrphanedProfiles finds profiles that reference non-existent resources
+func FindOrphanedProfiles() ([]OrphanedProfile, error) {
+	profiles, err := ListProfilesDetailed()
+	if err != nil {
+		return nil, err
+	}
+
+	ssoSessions, err := ListSSOSessions()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create map of existing SSO sessions
+	ssoSessionMap := make(map[string]bool)
+	for _, session := range ssoSessions {
+		ssoSessionMap[session.Name] = true
+	}
+
+	var orphaned []OrphanedProfile
+	for _, profile := range profiles {
+		if profile.Type == ProfileTypeSSO {
+			if !ssoSessionMap[profile.SSOSession] {
+				orphaned = append(orphaned, OrphanedProfile{
+					Name:   profile.Name,
+					Reason: fmt.Sprintf("SSO session '%s' not found", profile.SSOSession),
+				})
+			}
+		} else if profile.Type == ProfileTypeIAM && profile.SourceProfile != "" {
+			// Check if source profile exists
+			sourceExists := false
+			for _, p := range profiles {
+				if p.Name == profile.SourceProfile {
+					sourceExists = true
+					break
+				}
+			}
+			if !sourceExists {
+				orphaned = append(orphaned, OrphanedProfile{
+					Name:   profile.Name,
+					Reason: fmt.Sprintf("source profile '%s' not found", profile.SourceProfile),
+				})
+			}
+		}
+	}
+
+	return orphaned, nil
+}
+
+// ImportSSOSession imports an SSO session
+func ImportSSOSession(session SSOSessionInfo) error {
+	return AddSSOSession(session.Name, session.StartURL, session.Region)
+}
+
+// AddSSOProfile adds a new SSO profile
+func AddSSOProfile(profileName, ssoSession, ssoAccountID, ssoRoleName, region string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	// Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// Load or create config file
+	var cfg *ini.File
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		cfg = ini.Empty()
+	} else {
+		cfg, err = ini.Load(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to load config file: %w", err)
+		}
+	}
+
+	// Create profile section
+	sectionName := fmt.Sprintf("profile %s", profileName)
+	section, err := cfg.NewSection(sectionName)
+	if err != nil {
+		return fmt.Errorf("failed to create profile section: %w", err)
+	}
+
+	section.Key("sso_session").SetValue(ssoSession)
+	section.Key("sso_account_id").SetValue(ssoAccountID)
+	section.Key("sso_role_name").SetValue(ssoRoleName)
+	if region != "" {
+		section.Key("region").SetValue(region)
+	}
+
+	return cfg.SaveTo(configPath)
+}
+
+// ImportProfile imports a profile based on its type
+func ImportProfile(profile ProfileInfo) error {
+	switch profile.Type {
+	case ProfileTypeKey:
+		// Import IAM user profile with actual credentials from export
+		return AddIAMUserProfile(profile.Name, profile.AccessKey, profile.SecretKey, profile.Region)
+	case ProfileTypeIAM:
+		return AddIAMRoleProfile(profile.Name, profile.RoleARN, profile.SourceProfile, profile.MFASerial, profile.Region)
+	case ProfileTypeSSO:
+		return AddSSOProfile(profile.Name, profile.SSOSession, profile.SSOAccountID, profile.SSORoleName, profile.Region)
+	default:
+		return fmt.Errorf("cannot import profile type: %s", profile.Type)
+	}
+}
+
+// saveCredentialsWithDefaultLast ensures default profile is always last
+func saveCredentialsWithDefaultLast(cfg *ini.File, credentialsPath string) error {
+	// Get current source profile to preserve it
+	currentSourceProfile := GetCurrentProfileName()
+
+	// Get default section if it exists
+	var defaultSection *ini.Section
+	if cfg.HasSection("default") {
+		defaultSection = cfg.Section("default")
+		// Remove it temporarily
+		cfg.DeleteSection("default")
+	}
+
+	// Save file without default
+	if err := cfg.SaveTo(credentialsPath); err != nil {
+		return err
+	}
+
+	// Add default section back if it existed
+	if defaultSection != nil {
+		newDefault, err := cfg.NewSection("default")
+		if err != nil {
+			return err
+		}
+		// Copy all keys
+		for _, key := range defaultSection.Keys() {
+			newDefault.Key(key.Name()).SetValue(key.Value())
+		}
+		// Preserve the source profile comment if it existed
+		if currentSourceProfile != "" && !newDefault.HasKey("# source_profile") {
+			newDefault.Key("# source_profile").SetValue(currentSourceProfile)
+		}
+		return cfg.SaveTo(credentialsPath)
+	}
+
+	return nil
 }

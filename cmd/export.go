@@ -1,95 +1,83 @@
 package cmd
 
 import (
-	"context"
-	"errors"
+	"awsm/internal/aws"
+	"awsm/internal/util"
+	"encoding/json"
 	"fmt"
 	"os"
-
-	"awsm/internal/aws"
-	"awsm/internal/tui"
+	"time"
 
 	"github.com/spf13/cobra"
 )
 
-// --- Command Definitions ---
-
-var profileSetCmd = &cobra.Command{
-	Use:               "set <profile>",
-	Short:             "Set credentials for a profile in the default AWS credentials file",
-	Long:              `Updates the default profile in ~/.aws/credentials with the specified profile's credentials.`,
-	Args:              cobra.ExactArgs(1),
-	RunE:              runProfileSet,
-	ValidArgsFunction: completeProfiles,
-}
-
-// --- Main Logic ---
-
-func runProfileSet(cmd *cobra.Command, args []string) error {
-	profileName := args[0]
-
-	// Get profile region first
-	region, err := aws.GetProfileRegion(profileName)
-	if err != nil {
-		// Region is optional, continue without it
-		region = ""
-	}
-
-	// Use spinner for credential acquisition
-	var creds *aws.TempCredentials
-	var isStatic bool
-
-	err = tui.ShowSpinner(context.Background(), fmt.Sprintf("Getting credentials for profile '%s'", profileName), func() error {
-		var spinnerErr error
-		creds, isStatic, spinnerErr = aws.GetCredentialsForProfile(profileName)
-		return spinnerErr
-	})
-
-	if err != nil {
-		if errors.Is(err, aws.ErrSsoSessionExpired) {
-			fmt.Fprintln(os.Stderr, tui.WarningStyle.Render("⚠ SSO session for profile '"+profileName+"' has expired. Please log in again."))
-			os.Exit(10) // Exit with special code 10 to signal the shell wrapper.
-			return nil
+var exportCmd = &cobra.Command{
+	Use:   "export [output-file]",
+	Short: "Export all profiles and SSO sessions to a file",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Default output file
+		outputFile := fmt.Sprintf("awsm-export-%s.json", time.Now().Format("2006-01-02-150405"))
+		if len(args) > 0 {
+			outputFile = args[0]
 		}
-		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: "+err.Error()))
-		return fmt.Errorf("credential acquisition failed")
-	}
 
-	if isStatic {
-		err = aws.UpdateStaticProfile(profileName)
+		util.InfoColor.Printf("Exporting AWS configuration to: %s\n", util.BoldColor.Sprint(outputFile))
+
+		// Get profiles
+		profiles, err := aws.ListProfilesDetailed()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error updating credentials file: "+err.Error()))
-			return fmt.Errorf("failed to update credentials file")
+			return fmt.Errorf("failed to list profiles: %w", err)
 		}
-		fmt.Fprintln(os.Stderr, tui.SuccessStyle.Render("✓ Switched to profile '"+profileName+"' in default credentials."))
+
+		// Get SSO sessions
+		ssoSessions, err := aws.ListSSOSessions()
+		if err != nil {
+			return fmt.Errorf("failed to list SSO sessions: %w", err)
+		}
+
+		// Read config file content
+		configPath, _ := aws.GetAWSConfigPath()
+		var configContent string
+		if data, err := os.ReadFile(configPath); err == nil {
+			configContent = string(data)
+		}
+
+		// Read credentials file content
+		credentialsPath, _ := aws.GetAWSCredentialsPath()
+		var credentialsContent string
+		if data, err := os.ReadFile(credentialsPath); err == nil {
+			credentialsContent = string(data)
+		}
+
+		exportData := ExportData{
+			ExportedAt:      time.Now(),
+			Version:         "1.0",
+			Profiles:        profiles,
+			SSOSessions:     ssoSessions,
+			ConfigFile:      configContent,
+			CredentialsFile: credentialsContent,
+		}
+
+		// Create output file
+		file, err := os.Create(outputFile)
+		if err != nil {
+			return fmt.Errorf("failed to create output file: %w", err)
+		}
+		defer file.Close()
+
+		encoder := json.NewEncoder(file)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(exportData); err != nil {
+			return fmt.Errorf("failed to write export data: %w", err)
+		}
+
+		util.SuccessColor.Printf("✔ Export complete: %d profiles, %d SSO sessions\n", len(profiles), len(ssoSessions))
+		util.InfoColor.Printf("File saved: %s\n", outputFile)
 		return nil
-	}
-
-	err = aws.UpdateCredentialsFile(creds, region, profileName)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error updating credentials file: "+err.Error()))
-		return fmt.Errorf("failed to update credentials file")
-	}
-
-	fmt.Fprintln(os.Stderr, tui.SuccessStyle.Render("✓ Credentials for profile '"+profileName+"' are set."))
-	return nil
+	},
 }
-
-// --- Autocompletion Logic ---
-
-func completeProfiles(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) != 0 {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-	profiles, err := aws.ListProfiles()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-	return profiles, cobra.ShellCompDirectiveNoFileComp
-}
-
-// --- Initialization ---
 
 func init() {
-	// Command will be added to profile subcommand instead
+	rootCmd.AddCommand(exportCmd)
 }

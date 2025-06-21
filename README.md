@@ -5,14 +5,16 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 ## Features
 
 - **Profile Management**: Easily switch between AWS profiles with interactive selection
-- **SSO Support**: Complete AWS SSO (IAM Identity Center) integration
+- **SSO Support**: Complete AWS SSO (IAM Identity Center) integration with automatic profile generation
 - **MFA Support**: Streamlined MFA token handling for IAM profiles
+- **Smart Conflict Resolution**: Intelligent handling of profile name conflicts during creation
 - **Auto-refresh**: Automatic credential refresh when needed
 - **Console Access**: Open the AWS console in your browser with proper credentials
 - **Region Management**: Easily switch between AWS regions
 - **Browser Integration**: Open the console in specific Chrome profiles or Firefox containers
 - **Shell Completion**: Full autocompletion support for bash, zsh, fish, and PowerShell
 - **Interactive UI**: Beautiful terminal interface with responsive design
+- **Import/Export**: Backup and restore your AWS configuration
 
 ## Installation
 
@@ -47,6 +49,18 @@ awsm profile login my-sso-profile
 
 # Change default region for a profile
 awsm profile change-default-region my-profile eu-central-1
+
+# Add new profiles
+awsm profile add iam-user my-user        # Add IAM user profile with access keys
+awsm profile add iam-role my-role        # Add IAM role with assumption
+
+# Edit profiles
+awsm profile edit my-profile             # Edit existing profile interactively
+
+# Delete profiles
+awsm profile delete my-profile           # Delete single profile
+awsm profile delete --all-sso my-session # Delete all profiles for SSO session
+awsm profile delete --force my-profile   # Delete without confirmation
 ```
 
 ### Interactive Profile Selection
@@ -73,6 +87,10 @@ awsm sso list
 
 # List SSO Sessions with detailed information
 awsm sso list --detailed
+
+# Delete SSO session and all associated profiles
+awsm sso delete my-session               # Interactive deletion
+awsm sso delete --force my-session       # Delete without confirmation
 ```
 
 ### Credential Management
@@ -83,6 +101,11 @@ awsm refresh [profile-name]
 
 # Clear all credentials from default profile
 awsm clear
+
+# Export/Import configurations
+awsm export [output-file]               # Export all profiles and SSO sessions
+awsm import <export-file>                # Import from export file
+awsm import --force <export-file>        # Import without confirmation
 ```
 
 ### Console Access
@@ -160,7 +183,7 @@ AWSM supports three types of AWS profiles:
 
 - **SSO Profiles**: Use AWS IAM Identity Center for authentication
 - **IAM Profiles**: Use IAM roles with MFA for authentication
-- **Static Profiles**: Use long-term access keys (not recommended for production)
+- **IAM User Profiles**: Use long-term access keys (not recommended for production)
 
 ### Example SSO Session Configuration
 
@@ -207,6 +230,15 @@ For commercial licensing before 2028, please contact gc.ale03@gmail.com.
 - Tracks active profile in default credentials
 - Handles both temporary and static credentials
 
+### Smart Conflict Resolution
+- Detects existing profiles before creation
+- Offers multiple resolution options:
+  - Skip profile creation
+  - Auto-rename with type suffix
+  - Custom name input
+  - Overwrite existing profile
+- Consistent experience across all profile types
+
 ### Browser Integration
 - Generates federated sign-in URLs for AWS Console
 - Chrome profile support with custom aliases
@@ -218,6 +250,33 @@ For commercial licensing before 2028, please contact gc.ale03@gmail.com.
 - Profile name completion for relevant commands
 - Works with bash, zsh, fish, and PowerShell
 - Easy installation with generated scripts
+
+## Development
+
+### Building from Source
+
+```bash
+git clone https://github.com/AleG03/awsm.git
+cd awsm
+go build -o awsm .
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run specific package tests
+go test ./internal/aws
+```
+
+### Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Acknowledgments
 

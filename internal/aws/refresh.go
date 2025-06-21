@@ -86,7 +86,7 @@ func refreshCredentials(profileName string) error {
 		// IAM profiles require manual MFA input, so just inform user
 		return fmt.Errorf("IAM profile credentials expired. Please run: awsm %s", profileName)
 	default:
-		return fmt.Errorf("cannot auto-refresh static credentials")
+		return fmt.Errorf("cannot auto-refresh IAM user credentials")
 	}
 }
 

@@ -51,3 +51,21 @@ func TestTempCredentials(t *testing.T) {
 		t.Errorf("Expected token123, got %s", creds.SessionToken)
 	}
 }
+
+func TestProfileConfig(t *testing.T) {
+	config := &profileConfig{
+		MfaSerial:     "arn:aws:iam::123456789012:mfa/user",
+		RoleArn:       "arn:aws:iam::123456789012:role/test",
+		SourceProfile: "default",
+	}
+
+	if config.MfaSerial != "arn:aws:iam::123456789012:mfa/user" {
+		t.Errorf("Unexpected MfaSerial: %s", config.MfaSerial)
+	}
+	if config.RoleArn != "arn:aws:iam::123456789012:role/test" {
+		t.Errorf("Unexpected RoleArn: %s", config.RoleArn)
+	}
+	if config.SourceProfile != "default" {
+		t.Errorf("Unexpected SourceProfile: %s", config.SourceProfile)
+	}
+}

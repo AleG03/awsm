@@ -15,7 +15,7 @@ var refreshCmd = &cobra.Command{
 This command will automatically detect the profile type and refresh accordingly:
 - SSO profiles: Runs 'aws sso login'
 - IAM profiles: Prompts for new MFA token
-- Static profiles: Cannot be refreshed`,
+- IAM user profiles: Cannot be refreshed`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var profileName string

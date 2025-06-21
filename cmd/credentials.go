@@ -39,7 +39,7 @@ func GetCredentialsForProfile(profileName string) (creds *aws.TempCredentials, i
 		return handleSSOProfile(profileName)
 	}
 
-	util.WarnColor.Fprintf(os.Stderr, "Profile '%s' appears to use static credentials.\n", profileName)
+	util.WarnColor.Fprintf(os.Stderr, "Profile '%s' appears to use IAM user credentials.\n", profileName)
 	return nil, true, nil
 }
 

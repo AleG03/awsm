@@ -79,6 +79,8 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 			SessionToken:    sdkCreds.SessionToken,
 		}, false, nil
 
+	case "iam-user":
+		return nil, true, nil
 	case "static":
 		return nil, true, nil
 
@@ -103,6 +105,23 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	if err != nil {
 		section, err = cfgFile.GetSection(profileName)
 		if err != nil {
+			// Profile not found in config, check credentials file for IAM user
+			credentialsPath, credErr := GetAWSCredentialsPath()
+			if credErr != nil {
+				return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
+			}
+			credFile, credErr := ini.Load(credentialsPath)
+			if credErr != nil {
+				return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
+			}
+			credSection, credErr := credFile.GetSection(profileName)
+			if credErr != nil {
+				return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
+			}
+			// Check if it has static credentials
+			if credSection.HasKey("aws_access_key_id") && credSection.HasKey("aws_secret_access_key") {
+				return &profileConfig{}, "iam-user", nil
+			}
 			return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
 		}
 	}
@@ -120,8 +139,21 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 		return pConfig, "sso", nil
 	}
 	if section.HasKey("aws_access_key_id") {
-		return pConfig, "static", nil
+		return pConfig, "iam-user", nil
 	}
+
+	// Profile found in config but no special keys, check credentials file for static keys
+	credentialsPath, credErr := GetAWSCredentialsPath()
+	if credErr == nil {
+		credFile, credErr := ini.Load(credentialsPath)
+		if credErr == nil {
+			credSection, credErr := credFile.GetSection(profileName)
+			if credErr == nil && credSection.HasKey("aws_access_key_id") && credSection.HasKey("aws_secret_access_key") {
+				return &profileConfig{}, "iam-user", nil
+			}
+		}
+	}
+
 	return nil, "unknown", fmt.Errorf("could not determine type of profile '%s'", profileName)
 }
 
@@ -330,27 +362,31 @@ func UpdateStaticProfile(profileName string) error {
 		return err
 	}
 
-	// Load config file to get region
+	// Load config file to get region (optional)
+	var region string
 	cfgFile, err := ini.Load(configPath)
-	if err != nil {
-		return fmt.Errorf("failed to read AWS config file: %w", err)
-	}
-
-	sectionName := "profile " + profileName
-	configSection, err := cfgFile.GetSection(sectionName)
-	if err != nil {
-		configSection, err = cfgFile.GetSection(profileName)
+	if err == nil {
+		sectionName := "profile " + profileName
+		configSection, err := cfgFile.GetSection(sectionName)
 		if err != nil {
-			return fmt.Errorf("could not find profile section for '%s'", profileName)
+			configSection, err = cfgFile.GetSection(profileName)
+		}
+		if err == nil {
+			region = configSection.Key("region").String()
 		}
 	}
 
-	region := configSection.Key("region").String()
-
-	// Load credentials file to get static credentials
+	// Load credentials file to get static credentials and region if needed
 	credFile, err := ini.Load(credentialsPath)
 	if err != nil {
 		return fmt.Errorf("failed to read AWS credentials file: %w", err)
+	}
+
+	// If no region in config, check credentials file
+	if region == "" {
+		if credSection, err := credFile.GetSection(profileName); err == nil {
+			region = credSection.Key("region").String()
+		}
 	}
 
 	sourceSection, err := credFile.GetSection(profileName)
