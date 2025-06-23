@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -51,36 +50,6 @@ var profileCmd = &cobra.Command{
 	Use:     "profile",
 	Short:   "Manage AWS profiles",
 	Aliases: []string{"p"},
-}
-
-var profileLoginCmd = &cobra.Command{
-	Use:   "login <profile>",
-	Short: "Log in to SSO session and set profile",
-	Long:  `Logs in to the SSO session for the specified profile and automatically sets it as active.`,
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		profileName := args[0]
-		ssoSession, err := aws.GetSsoSessionForProfile(profileName)
-		if err != nil {
-			return err
-		}
-
-		util.InfoColor.Fprintf(os.Stderr, "Attempting SSO login for session: %s\n", util.BoldColor.Sprint(ssoSession))
-		util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
-
-		awsCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
-		awsCmd.Stdin = os.Stdin
-		awsCmd.Stdout = os.Stderr
-		awsCmd.Stderr = os.Stderr
-
-		if err := awsCmd.Run(); err != nil {
-			return fmt.Errorf("aws sso login failed: %w", err)
-		}
-		util.SuccessColor.Fprintln(os.Stderr, "\n✔ SSO login successful.")
-
-		// Now set the profile
-		return runProfileSet(cmd, []string{profileName})
-	},
 }
 
 var profileListCmd = &cobra.Command{
@@ -228,6 +197,10 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 		Bold(true).
 		Padding(1, 0)
 
+	// Define consistent styles for the entire function
+	regionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#F59E0B"))
+
 	fmt.Println(headerStyle.Render("🚀 AWS Profiles"))
 	fmt.Println(headerStyle.Render("═══════════"))
 	fmt.Println()
@@ -270,9 +243,6 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 		accountStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00D9FF"))
 
-		regionStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F59E0B"))
-
 		fmt.Println(ssoStyle.Render("● SSO Profiles"))
 
 		for session, sessionProfiles := range ssoSessions {
@@ -307,9 +277,6 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 		accountStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00D9FF"))
 
-		regionStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F59E0B"))
-
 		fmt.Println(iamStyle.Render("● IAM Role Profiles"))
 		for _, p := range iamProfiles {
 			fmt.Print("  ")
@@ -340,9 +307,6 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 			Foreground(lipgloss.Color("#10B981")).
 			Bold(true)
 
-		regionStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F59E0B"))
-
 		fmt.Println(keyStyle.Render("● Static Key Profiles"))
 		for _, p := range keyProfiles {
 			fmt.Print("  ")
@@ -365,7 +329,7 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 	fmt.Println("Profile type indicator")
 	util.InfoColor.Print("(123456789012) ")
 	fmt.Println("AWS Account ID")
-	util.WarnColor.Print("[us-east-1] ")
+	fmt.Print(regionStyle.Render("[us-east-1] "))
 	fmt.Println("Region")
 }
 
@@ -433,7 +397,6 @@ func init() {
 	profileListCmd.Flags().BoolVarP(&showHelp, "help-types", "H", false, "Show help about profile types")
 	profileListCmd.Flags().BoolVarP(&outputJSON, "json", "j", false, "Output profiles in JSON format")
 
-	profileCmd.AddCommand(profileLoginCmd)
 	profileCmd.AddCommand(profileSetCmd)
 	profileCmd.AddCommand(profileListCmd)
 	rootCmd.AddCommand(profileCmd)

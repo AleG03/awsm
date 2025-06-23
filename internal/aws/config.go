@@ -381,36 +381,34 @@ func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 		return err
 	}
 
-	// Add profile to config file if region is specified
-	if region != "" {
-		configPath, err := GetAWSConfigPath()
+	// Add profile to config file
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	// Load or create config file
+	var configCfg *ini.File
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		configCfg = ini.Empty()
+	} else {
+		configCfg, err = ini.Load(configPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to load config file: %w", err)
 		}
+	}
 
-		// Load or create config file
-		var configCfg *ini.File
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
-			configCfg = ini.Empty()
-		} else {
-			configCfg, err = ini.Load(configPath)
-			if err != nil {
-				return fmt.Errorf("failed to load config file: %w", err)
-			}
-		}
+	// Create profile section in config
+	configSectionName := fmt.Sprintf("profile %s", profileName)
+	configSection, err := configCfg.NewSection(configSectionName)
+	if err != nil {
+		return fmt.Errorf("failed to create config profile section: %w", err)
+	}
 
-		// Create profile section in config
-		configSectionName := fmt.Sprintf("profile %s", profileName)
-		configSection, err := configCfg.NewSection(configSectionName)
-		if err != nil {
-			return fmt.Errorf("failed to create config profile section: %w", err)
-		}
+	configSection.Key("region").SetValue(region)
 
-		configSection.Key("region").SetValue(region)
-
-		if err := configCfg.SaveTo(configPath); err != nil {
-			return fmt.Errorf("failed to save config file: %w", err)
-		}
+	if err := configCfg.SaveTo(configPath); err != nil {
+		return fmt.Errorf("failed to save config file: %w", err)
 	}
 
 	return nil

@@ -39,15 +39,24 @@ var profileAddIAMUserCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if strings.TrimSpace(accessKey) == "" {
+			return fmt.Errorf("access key ID is required")
+		}
 
 		secretKey, err := util.PromptForInput("AWS Secret Access Key: ")
 		if err != nil {
 			return err
 		}
+		if strings.TrimSpace(secretKey) == "" {
+			return fmt.Errorf("secret access key is required")
+		}
 
 		region, err := util.PromptForInput("Default region (e.g., us-east-1): ")
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(region) == "" {
+			return fmt.Errorf("region is required")
 		}
 
 		if err := aws.AddIAMUserProfile(profileName, accessKey, secretKey, region); err != nil {
