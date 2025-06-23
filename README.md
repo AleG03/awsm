@@ -41,11 +41,8 @@ awsm profile list
 # List profiles with detailed information
 awsm profile list --detailed
 
-# Set active profile
-awsm profile set my-profile
-
 # Login to SSO profile and set as active
-awsm profile login my-sso-profile
+awsm profile set my-profile
 
 # Change default region for a profile
 awsm profile change-default-region my-profile eu-central-1
@@ -136,23 +133,117 @@ awsm region set us-west-2
 
 ### Shell Completion
 
+AWSM supports tab completion for commands, subcommands, flags, and profile names across multiple shells.
+
+#### Bash
+
+**Linux:**
 ```bash
-# Generate completion script for your shell
-awsm completion bash   # or zsh, fish, powershell
+# Install completion
+awsm completion bash | sudo tee /etc/bash_completion.d/awsm
 
-# Install bash completion (Linux)
-awsm completion bash > /etc/bash_completion.d/awsm
+# Reload your shell
+source ~/.bashrc
+```
 
-# Install zsh completion (create directory first if needed)
+**macOS:**
+```bash
+# Install bash-completion if not already installed
+brew install bash-completion
+
+# Install AWSM completion
+awsm completion bash > $(brew --prefix)/etc/bash_completion.d/awsm
+
+# Reload your shell
+source ~/.bash_profile
+```
+
+#### Zsh
+
+**User-specific installation:**
+```bash
+# Create completions directory
 mkdir -p ~/.zsh/completions
+
+# Generate completion file
 awsm completion zsh > ~/.zsh/completions/_awsm
-# Add to your ~/.zshrc (if not already present)
+
+# Add to ~/.zshrc (if not already present)
 echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
 echo 'autoload -U compinit && compinit' >> ~/.zshrc
 
-# Alternative: Use system zsh completion directory (macOS)
+# Reload your shell
+source ~/.zshrc
+```
+
+**System-wide installation (macOS):**
+```bash
+# Install to system directory
 sudo mkdir -p /usr/local/share/zsh/site-functions
 sudo awsm completion zsh > /usr/local/share/zsh/site-functions/_awsm
+
+# Reload your shell
+source ~/.zshrc
+```
+
+#### Fish
+
+```bash
+# Create completions directory
+mkdir -p ~/.config/fish/completions
+
+# Generate completion file
+awsm completion fish > ~/.config/fish/completions/awsm.fish
+
+# Completions are automatically loaded (no restart needed)
+```
+
+**System-wide installation:**
+```bash
+# macOS with Homebrew Fish
+sudo awsm completion fish > /usr/local/share/fish/vendor_completions.d/awsm.fish
+
+# Linux systems
+sudo awsm completion fish > /usr/share/fish/vendor_completions.d/awsm.fish
+```
+
+#### PowerShell
+
+```powershell
+# Create PowerShell profile directory if it doesn't exist
+if (!(Test-Path -Path $PROFILE)) {
+    New-Item -ItemType File -Path $PROFILE -Force
+}
+
+# Add completion to your PowerShell profile
+awsm completion powershell >> $PROFILE
+
+# Reload your profile
+. $PROFILE
+```
+
+**Alternative method:**
+```powershell
+# Generate completion script
+awsm completion powershell | Out-String | Invoke-Expression
+```
+
+#### Testing Completions
+
+After installation, test your completions:
+
+```bash
+# Tab complete commands
+awsm <TAB>
+
+# Tab complete subcommands
+awsm profile <TAB>
+
+# Tab complete profile names
+awsm profile set <TAB>
+
+# Tab complete flags
+awsm profile list --<TAB>
 ```
 
 ### Software Update
