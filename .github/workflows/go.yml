@@ -35,11 +35,15 @@ jobs:
   update-aur:
     needs: goreleaser
     runs-on: ubuntu-latest
+    container: archlinux:latest
     if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
       - name: Update AUR package
         run: |
+          # Install required packages
+          pacman -Sy --noconfirm git openssh pacman-contrib
+          
           mkdir -p ~/.ssh
           echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
           chmod 600 ~/.ssh/aur
