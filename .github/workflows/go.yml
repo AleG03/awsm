@@ -45,6 +45,14 @@ jobs:
           chmod 600 ~/.ssh/aur
           ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
           
+          # Configure SSH to use the key
+          cat > ~/.ssh/config << EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+          chmod 600 ~/.ssh/config
+          
           git clone ssh://aur@aur.archlinux.org/awsm-bin.git awsm-bin
           cd awsm-bin
           
@@ -56,4 +64,4 @@ jobs:
           git config user.email "${{ secrets.AUR_EMAIL }}"
           git add .
           git commit -m "Update to version ${VERSION}"
-          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git push origin master
+          git push origin master
