@@ -412,7 +412,7 @@ func UpdateStaticProfile(profileName string) error {
 
 	defaultSection.Key("aws_access_key_id").SetValue(accessKey)
 	defaultSection.Key("aws_secret_access_key").SetValue(secretKey)
-	
+
 	// Check if source profile has session token and copy it
 	if sourceSection.HasKey("aws_session_token") {
 		sessionToken := sourceSection.Key("aws_session_token").String()

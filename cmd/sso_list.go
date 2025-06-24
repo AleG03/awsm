@@ -13,7 +13,6 @@ import (
 )
 
 var (
-	ssoListDetailed bool
 	ssoFilterRegion string
 	ssoNameFilter   string
 	ssoSortBy       string
@@ -76,12 +75,8 @@ var ssoListCmd = &cobra.Command{
 			return outputSSOSessionsJSON(filtered)
 		}
 
-		// Print sessions
-		if ssoListDetailed {
-			printDetailedSSOSessions(filtered)
-		} else {
-			printSimpleSSOSessions(filtered)
-		}
+		// Print detailed sessions
+		printDetailedSSOSessions(filtered)
 
 		return nil
 	},
@@ -93,28 +88,12 @@ func outputSSOSessionsJSON(sessions []aws.SSOSessionInfo) error {
 	return encoder.Encode(sessions)
 }
 
-func printSimpleSSOSessions(sessions []aws.SSOSessionInfo) {
-	headerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00D9FF")).
-		Bold(true)
-
-	fmt.Println(headerStyle.Render("🔐 SSO Sessions"))
-	fmt.Println(headerStyle.Render("═════════════"))
-	fmt.Println()
-
-	for _, s := range sessions {
-		util.SuccessColor.Printf("● %s\n", s.Name)
-		util.InfoColor.Printf("  Region: %s\n", s.Region)
-		fmt.Println()
-	}
-}
-
 func printDetailedSSOSessions(sessions []aws.SSOSessionInfo) {
 	headerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#00D9FF")).
 		Bold(true)
 
-	fmt.Println(headerStyle.Render("🔐 SSO Sessions (Detailed)"))
+	fmt.Println(headerStyle.Render("🔐 SSO Sessions"))
 	fmt.Println(headerStyle.Render("═══════════════════════"))
 	fmt.Println()
 
@@ -131,7 +110,6 @@ func printDetailedSSOSessions(sessions []aws.SSOSessionInfo) {
 }
 
 func init() {
-	ssoListCmd.Flags().BoolVarP(&ssoListDetailed, "detailed", "d", false, "Show detailed session information")
 	ssoListCmd.Flags().StringVarP(&ssoFilterRegion, "region", "r", "", "Filter by region")
 	ssoListCmd.Flags().StringVarP(&ssoNameFilter, "name", "n", "", "Filter by session name (case-insensitive)")
 	ssoListCmd.Flags().StringVarP(&ssoSortBy, "sort", "s", "name", "Sort by field (name, region)")

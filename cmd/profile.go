@@ -200,6 +200,8 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 	// Define consistent styles for the entire function
 	regionStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#F59E0B"))
+	accountStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00D9FF"))
 
 	fmt.Println(headerStyle.Render("🚀 AWS Profiles"))
 	fmt.Println(headerStyle.Render("═══════════"))
@@ -327,7 +329,7 @@ func printSimpleProfiles(profiles []aws.ProfileInfo) {
 	fmt.Println("Active profile")
 	fmt.Print("● ")
 	fmt.Println("Profile type indicator")
-	util.InfoColor.Print("(123456789012) ")
+	fmt.Print(accountStyle.Render("(123456789012) "))
 	fmt.Println("AWS Account ID")
 	fmt.Print(regionStyle.Render("[us-east-1] "))
 	fmt.Println("Region")
