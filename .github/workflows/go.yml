@@ -35,48 +35,13 @@ jobs:
   update-aur:
     needs: goreleaser
     runs-on: ubuntu-latest
-    container: archlinux:latest
     if: startsWith(github.ref, 'refs/tags/v')
-    
     steps:
-      - name: Update AUR package
-        run: |
-          pacman -Sy --noconfirm git openssh pacman-contrib curl
-          
-          mkdir -p ~/.ssh
-          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
-          
-          # Configure SSH for AUR
-          cat > ~/.ssh/config << EOF
-          Host aur.archlinux.org
-            IdentityFile ~/.ssh/id_rsa
-            User aur
-            StrictHostKeyChecking no
-          EOF
-          chmod 600 ~/.ssh/config
-          
-          git config --global user.name "${{ secrets.AUR_USERNAME }}"
-          git config --global user.email "${{ secrets.AUR_EMAIL }}"
-          
-          git clone ssh://aur@aur.archlinux.org/awsm-bin.git /tmp/aur-repo
-          cd /tmp/aur-repo
-          
-          VERSION=${GITHUB_REF#refs/tags/v}
-          
-          # Update PKGBUILD version
-          sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-          sed -i "s/pkgrel=.*/pkgrel=1/" PKGBUILD
-          
-          # Update source URLs to match GoReleaser naming
-          sed -i "s|source_x86_64=.*|source_x86_64=(\"https://github.com/AleG03/awsm/releases/download/v\${pkgver}/awsm_\${pkgver}_linux_amd64.tar.gz\")|" PKGBUILD
-          sed -i "s|source_aarch64=.*|source_aarch64=(\"https://github.com/AleG03/awsm/releases/download/v\${pkgver}/awsm_\${pkgver}_linux_arm64.tar.gz\")|" PKGBUILD
-          
-          # Update checksums
-          updpkgsums
-          
-          # Commit and push
-          git add .
-          git commit -m "Update to version ${VERSION}"
-          git push origin master
+      - uses: actions/checkout@v4
+      - uses: AleG03/aur-publish-action-go-releaser@v1.1.0
+        with:
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          package_name: awsm-bin
+          git_username: ${{ secrets.AUR_USERNAME }}
+          git_email: ${{ secrets.AUR_EMAIL }}
+          version: ${{ github.ref_name }}
