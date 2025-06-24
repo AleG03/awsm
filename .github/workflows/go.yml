@@ -35,37 +35,13 @@ jobs:
   update-aur:
     needs: goreleaser
     runs-on: ubuntu-latest
-    container: archlinux:latest
     if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
       - name: Update AUR package
-        run: |
-          # Install required packages
-          pacman -Sy --noconfirm git openssh pacman-contrib
-          
-          mkdir -p ~/.ssh
-          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
-          
-          # Configure SSH to use the key
-          cat > ~/.ssh/config << EOF
-          Host aur.archlinux.org
-            IdentityFile ~/.ssh/aur
-            User aur
-          EOF
-          chmod 600 ~/.ssh/config
-          
-          git clone ssh://aur@aur.archlinux.org/awsm-bin.git awsm-bin
-          cd awsm-bin
-          
-          VERSION=${GITHUB_REF#refs/tags/v}
-          sed -i "s/pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-          updpkgsums
-          
-          git config user.name "${{ secrets.AUR_USERNAME }}"
-          git config user.email "${{ secrets.AUR_EMAIL }}"
-          git add .
-          git commit -m "Update to version ${VERSION}"
-          git push origin master
+        uses: ATGardner/aur-update-action@v1
+        with:
+          package_name: awsm-bin
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
