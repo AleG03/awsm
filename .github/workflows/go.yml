@@ -38,10 +38,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
-      - uses: AleG03/aur-publish-action-go-releaser@v1.1.0
+      - uses: AleG03/aur-publish-action-go-releaser@v1.2.0
         with:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           package_name: awsm-bin
           git_username: ${{ secrets.AUR_USERNAME }}
           git_email: ${{ secrets.AUR_EMAIL }}
-          version: ${{ github.ref_name }}
