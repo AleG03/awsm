@@ -74,7 +74,7 @@ func AutoRefreshCredentials(profileName string) error {
 
 // refreshCredentials handles the actual refresh logic
 func refreshCredentials(profileName string) error {
-	profileType, err := getProfileTypeByName(profileName)
+	pConfig, profileType, err := inspectProfile(profileName)
 	if err != nil {
 		return err
 	}
@@ -83,6 +83,14 @@ func refreshCredentials(profileName string) error {
 	case "sso":
 		return refreshSSOCredentials(profileName)
 	case "iam":
+		// Check if IAM profile has an SSO source profile
+		if pConfig.SourceProfile != "" {
+			// Check if source profile is SSO
+			if _, sourceErr := GetSsoSessionForProfile(pConfig.SourceProfile); sourceErr == nil {
+				// Source profile is SSO, refresh it
+				return refreshSSOCredentials(pConfig.SourceProfile)
+			}
+		}
 		// IAM profiles require manual MFA input, so just inform user
 		return fmt.Errorf("IAM profile credentials expired. Please run: awsm %s", profileName)
 	default:

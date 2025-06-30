@@ -173,6 +173,20 @@ func assumeRole(profileName string, pConfig *profileConfig) (*types.Credentials,
 	stsClientProfile := profileName
 	if pConfig.SourceProfile != "" {
 		stsClientProfile = pConfig.SourceProfile
+
+		// Check if source profile is SSO and ensure it's logged in
+		if ssoSession, err := GetSsoSessionForProfile(stsClientProfile); err == nil {
+			// It's an SSO profile, check if login is needed
+			if needsLogin, checkErr := checkSSOLoginNeeded(stsClientProfile); checkErr != nil {
+				// If there's an error checking SSO status, it's likely expired or has connectivity issues
+				if strings.Contains(checkErr.Error(), "certificate") || strings.Contains(checkErr.Error(), "SSL") {
+					return nil, fmt.Errorf("SSL certificate issue with SSO session for source profile '%s'. Please check your network configuration or run: aws sso login --sso-session %s", stsClientProfile, ssoSession)
+				}
+				return nil, fmt.Errorf("SSO session for source profile '%s' has expired or is invalid. Please run: aws sso login --sso-session %s", stsClientProfile, ssoSession)
+			} else if needsLogin {
+				return nil, fmt.Errorf("SSO session for source profile '%s' has expired. Please run: aws sso login --sso-session %s", stsClientProfile, ssoSession)
+			}
+		}
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(stsClientProfile))
@@ -194,8 +208,11 @@ func assumeRole(profileName string, pConfig *profileConfig) (*types.Credentials,
 		RoleArn:         aws.String(pConfig.RoleArn),
 		RoleSessionName: aws.String(fmt.Sprintf("awsm-session-%d", time.Now().Unix())),
 		DurationSeconds: aws.Int32(3600),
-		SerialNumber:    aws.String(pConfig.MfaSerial),
-		TokenCode:       tokenCode,
+	}
+
+	if pConfig.MfaSerial != "" {
+		input.SerialNumber = aws.String(pConfig.MfaSerial)
+		input.TokenCode = tokenCode
 	}
 
 	stsClient := sts.NewFromConfig(awsCfg)
@@ -508,4 +525,14 @@ func ClearDefaultProfile() error {
 	section.DeleteKey("# source_profile")
 
 	return cfg.SaveTo(credentialsPath)
+}
+
+// checkSSOLoginNeeded checks if an SSO profile needs login
+func checkSSOLoginNeeded(profileName string) (bool, error) {
+	// Try to get credentials to see if SSO session is valid
+	_, _, err := GetCredentialsForProfile(profileName)
+	if err != nil && errors.Is(err, ErrSsoSessionExpired) {
+		return true, nil
+	}
+	return false, err
 }
