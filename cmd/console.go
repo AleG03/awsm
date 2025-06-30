@@ -60,15 +60,25 @@ Make sure to set a session first with 'awsmp <profile-name>'.`,
 		if err != nil {
 			return fmt.Errorf("failed to create session JSON: %w", err)
 		}
-		reqURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=getSigninToken&Session=%s", url.QueryEscape(string(sessionJSON)))
-		resp, err := http.Get(reqURL)
+
+		// Use POST to avoid URL length issues with long session tokens
+		formData := url.Values{}
+		formData.Set("Action", "getSigninToken")
+		formData.Set("Session", string(sessionJSON))
+
+		resp, err := http.PostForm("https://signin.aws.amazon.com/federation", formData)
 		if err != nil {
 			return fmt.Errorf("failed to get sign-in token: %w", err)
 		}
 		defer resp.Body.Close()
+
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
+		}
+
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("federation service returned status %d: %s", resp.StatusCode, string(body))
 		}
 		var tokenResp struct {
 			SigninToken string `json:"SigninToken"`
