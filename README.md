@@ -11,6 +11,7 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 - **Auto-refresh**: Automatic credential refresh when needed
 - **Console Access**: Open the AWS console in your browser with proper credentials
 - **Region Management**: Easily switch between AWS regions
+- **Search & Discovery**: Powerful search across profiles, account IDs, and SSO sessions with partial matching
 - **Browser Integration**: Open the console in specific Chrome profiles or Firefox containers
 - **Shell Completion**: Full autocompletion support for bash, zsh, fish, and PowerShell
 - **Interactive UI**: Beautiful terminal interface with responsive design
@@ -129,6 +130,24 @@ awsm region list
 
 # Set region for default profile
 awsm region set us-west-2
+```
+
+### Search and Discovery
+
+```bash
+# Search everything (profiles, account IDs, SSO sessions)
+awsm search my-profile             # Find profiles containing 'my-profile'
+awsm search 123456789012           # Find profiles with this account ID
+awsm search 1234                   # Find profiles with partial account ID
+awsm search test                # Find SSO sessions or profiles with 'test'
+
+# Search specific types only
+awsm search --account 8517          # Search only account IDs for '8517'
+awsm search --profile prod          # Search only profile names for 'prod'
+awsm search --sso my-session       # Search only SSO session names
+
+# Case-sensitive search
+awsm search --case-sensitive MyProfile
 ```
 
 ### Shell Completion
@@ -320,6 +339,14 @@ For commercial licensing before 2028, please contact gc.ale03@gmail.com.
 - Preserves profile context when switching regions
 - Tracks active profile in default credentials
 - Handles both temporary and static credentials
+
+### Advanced Search & Discovery
+- **Universal Search**: Search profiles, account IDs, and SSO sessions simultaneously
+- **Partial Matching**: Find accounts with partial IDs (e.g., `1234` finds `123456789012`)
+- **Flexible Queries**: Search beginning, middle, or end of strings
+- **Type-Specific Search**: Use `--account`, `--profile`, or `--sso` flags for targeted searches
+- **Color-Coded Results**: Visual distinction between SSO, IAM, and Key profiles
+- **Case Sensitivity**: Optional case-sensitive search with `--case-sensitive` flag
 
 ### Smart Conflict Resolution
 - Detects existing profiles before creation
