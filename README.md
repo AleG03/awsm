@@ -108,19 +108,79 @@ awsm import --force <export-file>        # Import without confirmation
 
 ### Console Access
 
+AWSM can open the AWS console in your browser with proper credentials. It supports both Chrome profiles and Firefox containers for better organization.
+
+#### Basic Usage
+
 ```bash
 # Open AWS console in default browser
 awsm console
 
-# Open in Firefox container (uses profile name as container)
-awsm console --firefox-container
-
-# Open in specific Chrome profile
-awsm console --chrome-profile work
-
 # Just print the URL without opening browser
 awsm console --no-open
 ```
+
+#### Chrome Profile Integration
+
+To use Chrome profiles with AWSM, you need to configure profile mappings in your AWSM configuration file.
+
+**Step 1: Find Your Chrome Profile Numbers**
+
+Chrome stores profiles with numeric identifiers. To find your profile numbers:
+
+1. Open Chrome and go to `chrome://version/`
+2. Look for the "Profile Path" - it will show something like:
+   - `Profile 1` (for the first additional profile)
+   - `Profile 2` (for the second additional profile)
+   - `Default` (for the default profile)
+
+Alternatively, you can check your Chrome profile directory:
+- **macOS**: `~/Library/Application Support/Google/Chrome/`
+- **Linux**: `~/.config/google-chrome/`
+- **Windows**: `%LOCALAPPDATA%\Google\Chrome\User Data\`
+
+**Step 2: Configure Profile Mappings**
+
+Create or edit `~/.config/awsm/config.toml` and add your Chrome profile mappings:
+
+```toml
+[chrome_profiles]
+work = "Profile 1"
+personal = "Profile 2"
+default = "Default"
+company = "Profile 3"
+```
+
+**Step 3: Use Chrome Profiles**
+
+```bash
+# Open console in specific Chrome profile
+awsm console --chrome-profile work
+awsm console --chrome-profile personal
+awsm console --chrome-profile default
+```
+
+#### Firefox Container Integration
+
+For Firefox, AWSM uses the "Open external links in a container" extension to open AWS console links in specific containers.
+
+**Step 1: Install the Extension**
+
+1. Install the [Open external links in a container](https://addons.mozilla.org/en-US/firefox/addon/open-url-in-container/) extension from Firefox Add-ons
+2. The extension allows external links to be opened in specific Firefox containers
+
+**Step 2: Use Firefox Containers**
+
+```bash
+# Open console in Firefox container (uses profile name as container name)
+awsm console --firefox-container
+
+# This will attempt to open the AWS console in a Firefox container
+# with the same name as your current AWS profile
+```
+
+**Note**: The container name will match your AWS profile name. If you have a profile named `work-production`, AWSM will try to open the console in a Firefox container named `work-production`.
+
 
 ### Region Management
 
