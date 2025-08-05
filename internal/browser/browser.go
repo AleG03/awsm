@@ -2,29 +2,46 @@ package browser
 
 import (
 	"awsm/internal/config"
-	"encoding/json"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 
 	"github.com/pkg/browser"
 )
 
-type FirefoxContainer struct {
-	Icon          string `json:"icon"`
-	Color         string `json:"color"`
-	Name          string `json:"name"`
-	Public        bool   `json:"public"`
-	UserContextID int    `json:"userContextId"`
+// Available Firefox container colors (from the extension documentation)
+var firefoxColors = []string{
+	"blue", "turquoise", "green", "yellow",
+	"orange", "red", "pink", "purple",
 }
 
-type FirefoxContainers struct {
-	Version           int                `json:"version"`
-	LastUserContextId int                `json:"lastUserContextId"`
-	Identities        []FirefoxContainer `json:"identities"`
+// Available Firefox container icons (from the extension documentation)
+var firefoxIcons = []string{
+	"fingerprint", "briefcase", "dollar", "cart", "circle",
+	"gift", "vacation", "food", "fruit", "pet", "tree", "chill",
+}
+
+// getRandomFirefoxColor returns a random color from the available Firefox container colors
+func getRandomFirefoxColor() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(firefoxColors))))
+	if err != nil {
+		// Fallback to a default color if random generation fails
+		return "blue"
+	}
+	return firefoxColors[n.Int64()]
+}
+
+// getRandomFirefoxIcon returns a random icon from the available Firefox container icons
+func getRandomFirefoxIcon() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(firefoxIcons))))
+	if err != nil {
+		// Fallback to a default icon if random generation fails
+		return "fingerprint"
+	}
+	return firefoxIcons[n.Int64()]
 }
 
 // OpenURL opens a URL in the specified browser profile/container.
@@ -64,117 +81,21 @@ func openURLInChromeProfile(targetURL, chromeProfileAlias string) error {
 	return cmd.Start()
 }
 
-// getFirefoxProfileDir returns the path to the default Firefox profile directory
-func getFirefoxProfileDir() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not get user home directory: %w", err)
-	}
-
-	var firefoxDir string
-	switch runtime.GOOS {
-	case "darwin":
-		firefoxDir = filepath.Join(homeDir, "Library/Application Support/Firefox/Profiles")
-	case "linux":
-		firefoxDir = filepath.Join(homeDir, ".mozilla/firefox")
-	case "windows":
-		firefoxDir = filepath.Join(homeDir, "AppData/Roaming/Mozilla/Firefox/Profiles")
-	default:
-		return "", fmt.Errorf("unsupported operating system")
-	}
-
-	entries, err := os.ReadDir(firefoxDir)
-	if err != nil {
-		return "", fmt.Errorf("could not read Firefox profiles directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			name := entry.Name()
-			if filepath.Ext(name) == ".default-release" {
-				return filepath.Join(firefoxDir, name), nil
-			}
-		}
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			name := entry.Name()
-			if filepath.Ext(name) == ".default" {
-				return filepath.Join(firefoxDir, name), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("could not find Firefox default profile")
-}
-
-// createFirefoxContainer creates a new Firefox container or returns an existing one
-func createFirefoxContainer(name string) (string, error) {
-	profileDir, err := getFirefoxProfileDir()
-	if err != nil {
-		return "", err
-	}
-
-	containersFile := filepath.Join(profileDir, "containers.json")
-	var containers FirefoxContainers
-
-	data, err := os.ReadFile(containersFile)
-	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("error reading containers file: %w", err)
-	}
-
-	if err == nil {
-		if err := json.Unmarshal(data, &containers); err != nil {
-			return "", fmt.Errorf("error parsing containers file: %w", err)
-		}
-	} else {
-		containers = FirefoxContainers{
-			Version:           5,
-			LastUserContextId: 1,
-			Identities:        []FirefoxContainer{},
-		}
-	}
-
-	for _, container := range containers.Identities {
-		if container.Name == name {
-			return name, nil
-		}
-	}
-
-	containers.LastUserContextId++
-	newContainer := FirefoxContainer{
-		Icon:          "fingerprint",
-		Color:         "blue",
-		Name:          name,
-		Public:        true,
-		UserContextID: containers.LastUserContextId,
-	}
-	containers.Identities = append(containers.Identities, newContainer)
-
-	updatedData, err := json.MarshalIndent(containers, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("error marshaling containers: %w", err)
-	}
-
-	if err := os.WriteFile(containersFile, updatedData, 0644); err != nil {
-		return "", fmt.Errorf("error writing containers file: %w", err)
-	}
-
-	return name, nil
-}
-
-// openURLInFirefoxContainer opens a URL in a Firefox container
+// openURLInFirefoxContainer opens a URL in a Firefox container with random color and icon
 func openURLInFirefoxContainer(targetURL, containerName string) error {
-	containerName, err := createFirefoxContainer(containerName)
-	if err != nil {
-		return browser.OpenURL(targetURL)
-	}
+	// Generate random color and icon for the container
+	randomColor := getRandomFirefoxColor()
+	randomIcon := getRandomFirefoxIcon()
 
 	var cmd *exec.Cmd
-	containerURL := fmt.Sprintf("ext+container:name=%s&url=%s",
+	// Use the extension's URL format with color and icon parameters
+	// This will create the container with random color/icon if it doesn't exist
+	containerURL := fmt.Sprintf("ext+container:name=%s&color=%s&icon=%s&url=%s",
 		url.QueryEscape(containerName),
+		url.QueryEscape(randomColor),
+		url.QueryEscape(randomIcon),
 		url.QueryEscape(targetURL))
+
 	switch runtime.GOOS {
 	case "darwin": // macOS
 		cmd = exec.Command("/Applications/Firefox.app/Contents/MacOS/firefox",
