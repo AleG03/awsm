@@ -22,6 +22,9 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 ### From Releases
 
 Download the latest release for your platform from the [Releases page](https://github.com/AleG03/awsm/releases).
+Copy the binary to your PATH and run `awsm` from anywhere.
+For MacOS users, you can also copy the binary into /usr/local/bin and run from everyone.
+For arch linux users, the binary is available in the AUR.
 
 ### From Source
 
@@ -210,6 +213,143 @@ awsm search --sso my-session       # Search only SSO session names
 
 # Case-sensitive search
 awsm search --case-sensitive MyProfile
+```
+
+### AWS CLI Wrapper
+
+AWSM provides an AWS CLI wrapper that automatically refreshes expired credentials before executing AWS commands. This eliminates the need to manually refresh credentials when they expire.
+
+#### Installation
+
+Install the wrapper for your shell:
+
+```bash
+# Install for current shell (auto-detected)
+awsm wrapper
+
+# Install for specific shell
+awsm wrapper zsh
+awsm wrapper bash
+awsm wrapper fish
+awsm wrapper powershell
+
+# Install for all supported shells
+awsm wrapper --all
+
+# Force installation (overwrite existing wrapper)
+awsm wrapper --force zsh
+```
+
+#### Management
+
+```bash
+# Check installation status
+awsm wrapper --status
+
+# Check status in JSON format
+awsm wrapper --status --json
+
+# Uninstall wrapper
+awsm wrapper --uninstall zsh
+
+# Uninstall from all shells
+awsm wrapper --uninstall --all
+```
+
+#### How It Works
+
+The wrapper function:
+
+1. **Intercepts AWS CLI calls**: When you run `aws` commands, the wrapper function is called instead
+2. **Checks credential validity**: Uses `aws sts get-caller-identity` to verify credentials are valid
+3. **Auto-refreshes when needed**: If credentials are expired, automatically runs `awsm refresh`
+4. **Transparent execution**: Passes through all arguments to the original AWS CLI
+
+#### Usage Examples
+
+After installation, use AWS CLI commands normally:
+
+```bash
+# These commands will automatically refresh credentials if needed
+aws s3 ls
+aws ec2 describe-instances
+aws iam list-users
+aws lambda list-functions
+
+# Bypass the wrapper if needed
+command aws s3 ls  # Calls original AWS CLI directly
+```
+
+#### Shell-Specific Installation Details
+
+**Zsh:**
+- Creates wrapper function in `~/.zsh/functions/aws`
+- Adds function directory to fpath in `~/.zshrc`
+- Uses Zsh's autoload functionality
+
+**Bash:**
+- Appends wrapper function to `~/.bashrc`
+- Function is loaded when shell starts
+
+**Fish:**
+- Creates wrapper function in `~/.config/fish/functions/aws.fish`
+- Fish automatically loads functions from this directory
+
+**PowerShell:**
+- Appends wrapper function to PowerShell profile
+- Uses PowerShell jobs for timeout handling
+
+#### Performance
+
+The wrapper is designed to be fast and transparent:
+- **Minimal overhead**: < 200ms when credentials are valid
+- **Efficient checking**: Uses fastest AWS operation for credential validation
+- **Smart caching**: Avoids unnecessary credential checks
+- **Timeout protection**: Prevents hanging on network issues
+
+#### Troubleshooting
+
+**Wrapper not working:**
+```bash
+# Check installation status
+awsm wrapper --status
+
+# Reinstall with force flag
+awsm wrapper --force
+
+# Reload your shell
+source ~/.zshrc  # or ~/.bashrc, ~/.config/fish/config.fish
+```
+
+**Permission issues:**
+```bash
+# Check file permissions
+ls -la ~/.zsh/functions/aws  # for zsh
+ls -la ~/.bashrc             # for bash
+
+# Reinstall if permissions are wrong
+awsm wrapper --force zsh
+```
+
+**Credential refresh fails:**
+```bash
+# Test manual refresh
+awsm refresh
+
+# Check current profile
+awsm profile current
+
+# Verify profile configuration
+awsm profile list --detailed
+```
+
+**Bypass wrapper temporarily:**
+```bash
+# Use original AWS CLI
+command aws s3 ls
+
+# Or uninstall wrapper
+awsm wrapper --uninstall
 ```
 
 ### Shell Completion

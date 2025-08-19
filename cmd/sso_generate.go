@@ -24,7 +24,8 @@ var generateCmd = &cobra.Command{
 	Long: `This powerful command logs into an SSO session, discovers all accounts and roles
 you have access to, and generates the corresponding AWS profile configurations.
 
-The generated profiles are saved to '~/.aws/config' using the region from the SSO session.`,
+The generated profiles are saved to '~/.aws/config' using the region from the SSO session.
+Existing profiles are automatically updated without prompting.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSSOGenerate(args[0])
@@ -108,12 +109,28 @@ func runSSOGenerate(ssoSession string) error {
 		existingConfig = string(existingConfigBytes)
 	}
 
-	// Parse existing profile names
+	// Parse existing profile names and their content
 	existingProfiles := make(map[string]bool)
+	existingProfileContent := make(map[string]string)
 	profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
+
 	for _, match := range profileHeaderRegex.FindAllStringSubmatch(existingConfig, -1) {
 		if len(match) > 1 {
 			existingProfiles[match[1]] = true
+			// Extract the profile content for comparison
+			profileName := match[1]
+			profileStart := strings.Index(existingConfig, match[0])
+			if profileStart != -1 {
+				// Find the end of this profile (next profile or end of file)
+				nextProfileStart := len(existingConfig)
+				for _, nextMatch := range profileHeaderRegex.FindAllStringSubmatch(existingConfig[profileStart+len(match[0]):], -1) {
+					if len(nextMatch) > 1 {
+						nextProfileStart = profileStart + len(match[0]) + strings.Index(existingConfig[profileStart+len(match[0]):], nextMatch[0])
+						break
+					}
+				}
+				existingProfileContent[profileName] = existingConfig[profileStart:nextProfileStart]
+			}
 		}
 	}
 
@@ -146,49 +163,63 @@ func runSSOGenerate(ssoSession string) error {
 
 					profileName := fmt.Sprintf("%s-%s", cleanAccountName, cleanRoleName)
 
+					// Generate the new profile content
+					newProfileContent := fmt.Sprintf("[profile %s]\nsso_session = %s\nsso_account_id = %s\nsso_role_name = %s\nregion = %s\n\n",
+						profileName, ssoSession, *acc.AccountId, *role.RoleName, awsRegion)
+
 					if existingProfiles[profileName] {
-						resolvedName, skip := resolveProfileConflict(profileName, *acc.AccountId, ssoSession)
-						if skip {
-							continue
+						// Check if the profile content is different
+						if existingContent, exists := existingProfileContent[profileName]; exists {
+							// Extract just the configuration lines for comparison
+							existingLines := extractProfileConfig(existingContent)
+							newLines := extractProfileConfig(newProfileContent)
+
+							if existingLines == newLines {
+								// Profile is identical, skip it
+								util.InfoColor.Fprintf(os.Stderr, "    Profile '%s' is up to date, skipping\n", profileName)
+								continue
+							} else {
+								// Profile content is different, update it
+								util.InfoColor.Fprintf(os.Stderr, "    Updating profile '%s' with new configuration\n", profileName)
+								// Remove the old profile from existing config
+								existingConfig = removeProfileFromConfig(existingConfig, profileName)
+							}
+						} else {
+							// Profile exists but we couldn't find its content, update it anyway
+							util.InfoColor.Fprintf(os.Stderr, "    Updating profile '%s'\n", profileName)
+							existingConfig = removeProfileFromConfig(existingConfig, profileName)
 						}
-						profileName = resolvedName
 					}
 
-					newProfilesBuilder.WriteString(fmt.Sprintf("[profile %s]\n", profileName))
-					newProfilesBuilder.WriteString(fmt.Sprintf("sso_session = %s\n", ssoSession))
-					newProfilesBuilder.WriteString(fmt.Sprintf("sso_account_id = %s\n", *acc.AccountId))
-					newProfilesBuilder.WriteString(fmt.Sprintf("sso_role_name = %s\n", *role.RoleName))
-					newProfilesBuilder.WriteString(fmt.Sprintf("region = %s\n", awsRegion))
-					newProfilesBuilder.WriteString("\n")
+					newProfilesBuilder.WriteString(newProfileContent)
 					profileCount++
 				}
 			}
 		}
 	}
 
-	// Only append if there are new profiles
+	// Write the updated config
 	if newProfilesBuilder.Len() > 0 {
-		// Ensure proper spacing before new profiles
-		appendContent := newProfilesBuilder.String()
-		if len(existingConfig) > 0 {
-			if !strings.HasSuffix(existingConfig, "\n") {
-				appendContent = "\n" + appendContent
+		// Combine existing config (with removed profiles if updating) and new profiles
+		finalConfig := existingConfig
+		newContent := newProfilesBuilder.String()
+		if len(finalConfig) > 0 {
+			if !strings.HasSuffix(finalConfig, "\n") {
+				finalConfig += "\n"
 			}
-			// Add blank line before new profiles
-			appendContent = "\n" + appendContent
+			finalConfig += "\n" + newContent
+		} else {
+			finalConfig = newContent
 		}
 
-		f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_WRONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to open %s for appending: %w", outputFile, err)
+		// Write the complete config file
+		if err := os.WriteFile(outputFile, []byte(finalConfig), 0600); err != nil {
+			return fmt.Errorf("failed to write %s: %w", outputFile, err)
 		}
-		defer f.Close()
-		if _, err := f.WriteString(appendContent); err != nil {
-			return fmt.Errorf("failed to append profiles to %s: %w", outputFile, err)
-		}
-		util.SuccessColor.Printf("\n✔ Done! %d new profiles appended to %s\n", profileCount, util.BoldColor.Sprint(outputFile))
+
+		util.SuccessColor.Printf("\n✔ Done! %d profiles updated/added to %s\n", profileCount, util.BoldColor.Sprint(outputFile))
 	} else {
-		util.InfoColor.Println("No new profiles to add. All profiles already exist in your config.")
+		util.InfoColor.Println("All profiles are up to date.")
 	}
 
 	util.InfoColor.Println("You can now use the new profiles from your ~/.aws/config.")
@@ -336,6 +367,48 @@ func resolveProfileConflict(profileName, accountId, ssoSession string) (string, 
 		util.WarnColor.Println("Invalid choice. Skipping profile.")
 		return "", true
 	}
+}
+
+// extractProfileConfig extracts just the configuration lines from a profile section
+func extractProfileConfig(profileContent string) string {
+	lines := strings.Split(profileContent, "\n")
+	var configLines []string
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Skip the profile header and empty lines
+		if line != "" && !strings.HasPrefix(line, "[profile ") {
+			configLines = append(configLines, line)
+		}
+	}
+
+	return strings.Join(configLines, "\n")
+}
+
+// removeProfileFromConfig removes a specific profile from the config content
+func removeProfileFromConfig(config, profileName string) string {
+	profileHeaderRegex := regexp.MustCompile(fmt.Sprintf(`(?m)^\[profile %s\]`, regexp.QuoteMeta(profileName)))
+	match := profileHeaderRegex.FindStringIndex(config)
+	if match == nil {
+		return config
+	}
+
+	// Find the start of the profile
+	profileStart := match[0]
+
+	// Find the end of the profile (next profile or end of file)
+	nextProfileRegex := regexp.MustCompile(`(?m)^\[profile [^\]]+\]`)
+	nextMatches := nextProfileRegex.FindAllStringIndex(config[match[1]:], -1)
+
+	var profileEnd int
+	if len(nextMatches) > 0 {
+		profileEnd = match[1] + nextMatches[0][0]
+	} else {
+		profileEnd = len(config)
+	}
+
+	// Remove the profile section
+	return config[:profileStart] + config[profileEnd:]
 }
 
 func init() {
