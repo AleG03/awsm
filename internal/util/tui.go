@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/fatih/color"
@@ -16,6 +17,7 @@ var (
 	ErrorColor   = color.New(color.FgRed)
 	WarnColor    = color.New(color.FgYellow)
 	BoldColor    = color.New(color.Bold)
+	quietMode    = false
 )
 
 func PrintTable(headers []string, data [][]string) {
@@ -85,4 +87,20 @@ func SortBy[T any](slice []T, less func(T, T) bool) {
 			}
 		}
 	}
+}
+
+// SetQuietMode enables or disables quiet mode for suppressing info messages
+func SetQuietMode(quiet bool) {
+	quietMode = quiet
+	if quiet {
+		// Disable color output when in quiet mode
+		InfoColor.DisableColor()
+		SuccessColor.DisableColor()
+		WarnColor.DisableColor()
+	}
+}
+
+// CreateCommand creates an exec.Cmd with the given command and arguments
+func CreateCommand(name string, args ...string) *exec.Cmd {
+	return exec.Command(name, args...)
 }

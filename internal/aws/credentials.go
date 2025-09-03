@@ -19,7 +19,7 @@ import (
 	ini "gopkg.in/ini.v1"
 )
 
-// ErrSsoSessionExpired is a special error used to signal the shell wrapper.
+// ErrSsoSessionExpired indicates SSO session has expired
 var ErrSsoSessionExpired = errors.New("sso session is expired or invalid")
 
 // TempCredentials holds a set of temporary AWS credentials.
@@ -39,11 +39,6 @@ type profileConfig struct {
 // GetCredentialsForProfile is the main entry point for getting credentials.
 // It inspects the profile and dispatches to the correct handler.
 func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isStatic bool, err error) {
-	// Auto-refresh credentials if needed
-	if err := AutoRefreshCredentials(profileName); err != nil {
-		// If auto-refresh fails, continue with existing logic (might still work)
-		util.WarnColor.Fprintf(os.Stderr, "Auto-refresh failed: %v\n", err)
-	}
 	pConfig, profileType, err := inspectProfile(profileName)
 	if err != nil {
 		return nil, false, err

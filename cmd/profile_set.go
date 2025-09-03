@@ -57,7 +57,7 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		if errors.Is(err, aws.ErrSsoSessionExpired) {
 			fmt.Fprintln(os.Stderr, tui.WarningStyle.Render("⚠ SSO session for profile '"+profileName+"' has expired. Please log in again."))
-			os.Exit(10) // Exit with special code 10 to signal the shell wrapper.
+			os.Exit(1)
 			return nil
 		}
 		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: "+err.Error()))

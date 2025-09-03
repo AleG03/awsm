@@ -31,18 +31,14 @@ var consoleCmd = &cobra.Command{
 automatically opens it in your default browser, a specified Chrome profile,
 or a Firefox Multi-Account Container.
 
-The command automatically checks credential validity and refreshes expired
-credentials before generating the console URL. If auto-refresh fails, it
-provides helpful guidance on manual refresh steps.
+The command generates a console URL using your current AWS credentials.
+Make sure your credentials are valid before running this command.
 
 By default, opens in the default browser.
 Use --chrome-profile to open in a specific Chrome profile.
 Use --firefox-container to open in a Firefox container matching your AWS profile name.
 
-Make sure to set a session first with 'awsm profile set <profile-name>'.
-
-For automatic credential refresh with AWS CLI commands, consider installing
-the wrapper function: 'awsm wrapper'`,
+Make sure to set a session first with 'awsm profile set <profile-name>'.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get current profile
@@ -54,20 +50,7 @@ the wrapper function: 'awsm wrapper'`,
 			return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first")
 		}
 
-		// Check credential status first
-		status, err := aws.CheckCredentialStatus(currentProfile)
-		if err != nil {
-			util.WarnColor.Fprintf(os.Stderr, "Warning: Could not check credential status: %v\n", err)
-		}
-
-		// Auto-refresh credentials if needed
-		if status == aws.CredentialExpired || status == aws.CredentialExpiringSoon || status == aws.CredentialMissing {
-			util.InfoColor.Fprintf(os.Stderr, "🔄 Refreshing credentials for profile '%s'...\n", currentProfile)
-			if err := aws.AutoRefreshCredentials(currentProfile); err != nil {
-				return fmt.Errorf("credential refresh failed: %w\n\nPlease try:\n  awsm refresh %s\n  awsm sso login <session-name>", err, currentProfile)
-			}
-			util.SuccessColor.Fprintf(os.Stderr, "✔ Credentials refreshed successfully\n")
-		}
+		// Note: Credential validation will happen when AWS config is loaded
 
 		// Load AWS config with the current profile
 		awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(currentProfile))
@@ -80,13 +63,13 @@ the wrapper function: 'awsm wrapper'`,
 		if err != nil {
 			// Check if this is a credential expiration error
 			if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
-				return fmt.Errorf("credentials are expired and auto-refresh failed: %w\n\nPlease try:\n  awsm refresh %s\n  awsm sso login <session-name>", err, currentProfile)
+				return fmt.Errorf("credentials are expired: %w\n\nPlease try:\n  awsm sso login <session-name>\n  aws sso login --sso-session <session-name>", err)
 			}
 			return fmt.Errorf("failed to retrieve credentials for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
 		}
 
 		if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
-			return fmt.Errorf("invalid credentials found for profile '%s'. Please run:\n  awsm refresh %s\n  awsm profile set <profile-name>", currentProfile, currentProfile)
+			return fmt.Errorf("invalid credentials found for profile '%s'. Please run:\n  awsm sso login <session-name>\n  awsm profile set <profile-name>", currentProfile)
 		}
 		sessionJSON, err := json.Marshal(map[string]string{"sessionId": creds.AccessKeyID, "sessionKey": creds.SecretAccessKey, "sessionToken": creds.SessionToken})
 		if err != nil {
@@ -114,7 +97,7 @@ the wrapper function: 'awsm wrapper'`,
 			switch resp.StatusCode {
 			case 400:
 				// Bad Request - usually means expired or invalid credentials
-				return fmt.Errorf("AWS federation service rejected the credentials (status 400)\n\nThis usually means your credentials are expired or invalid.\nPlease try:\n  awsm refresh %s\n  awsm sso login <session-name>\n\nIf the problem persists, check your profile configuration with:\n  awsm profile list --detailed\n\nTip: Install the wrapper function to avoid this issue:\n  awsm wrapper", currentProfile)
+				return fmt.Errorf("AWS federation service rejected the credentials (status 400)\n\nThis usually means your credentials are expired or invalid.\nPlease try:\n  awsm sso login <session-name>\n  aws sso login --sso-session <session-name>\n\nIf the problem persists, check your profile configuration with:\n  awsm profile list --detailed")
 			case 403:
 				// Forbidden - usually means insufficient permissions
 				return fmt.Errorf("AWS federation service denied access (status 403)\n\nThis usually means your credentials don't have permission to access the console.\nPlease check your IAM permissions or try a different profile.")
@@ -125,9 +108,9 @@ the wrapper function: 'awsm wrapper'`,
 				// Other errors - show the full response for debugging
 				if len(body) > 1000 {
 					// Truncate very long responses (like HTML error pages)
-					return fmt.Errorf("federation service returned status %d\n\nResponse (truncated): %s...\n\nPlease try refreshing your credentials:\n  awsm refresh %s", resp.StatusCode, string(body[:1000]), currentProfile)
+					return fmt.Errorf("federation service returned status %d\n\nResponse (truncated): %s...\n\nPlease try refreshing your credentials:\n  awsm sso login <session-name>", resp.StatusCode, string(body[:1000]))
 				}
-				return fmt.Errorf("federation service returned status %d: %s\n\nPlease try refreshing your credentials:\n  awsm refresh %s", resp.StatusCode, string(body), currentProfile)
+				return fmt.Errorf("federation service returned status %d: %s\n\nPlease try refreshing your credentials:\n  awsm sso login <session-name>", resp.StatusCode, string(body))
 			}
 		}
 		var tokenResp struct {

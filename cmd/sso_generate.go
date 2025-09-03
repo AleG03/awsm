@@ -411,6 +411,21 @@ func removeProfileFromConfig(config, profileName string) string {
 	return config[:profileStart] + config[profileEnd:]
 }
 
+// extractProfileNamesFromContent extracts profile names from generated profile content
+func extractProfileNamesFromContent(content string) []string {
+	var profileNames []string
+	profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
+
+	matches := profileHeaderRegex.FindAllStringSubmatch(content, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			profileNames = append(profileNames, match[1])
+		}
+	}
+
+	return profileNames
+}
+
 func init() {
 	ssoCmd.AddCommand(generateCmd)
 }
