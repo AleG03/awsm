@@ -14,9 +14,10 @@ var (
 )
 
 var ssoDeleteCmd = &cobra.Command{
-	Use:   "delete <sso-session>",
-	Short: "Delete an SSO session and optionally its associated profiles",
-	Args:  cobra.ExactArgs(1),
+	Use:               "delete <sso-session>",
+	Short:             "Delete an SSO session and optionally its associated profiles",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeSSOSessions,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ssoSession := args[0]
 

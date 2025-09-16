@@ -10,9 +10,10 @@ import (
 )
 
 var profileEditCmd = &cobra.Command{
-	Use:   "edit <profile-name>",
-	Short: "Edit an existing AWS profile",
-	Args:  cobra.ExactArgs(1),
+	Use:               "edit <profile-name>",
+	Short:             "Edit an existing AWS profile",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeProfiles,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profileName := args[0]
 

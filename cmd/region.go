@@ -49,9 +49,10 @@ var regionListCmd = &cobra.Command{
 }
 
 var regionSetCmd = &cobra.Command{
-	Use:   "set <region>",
-	Short: "Set the region for the default profile",
-	Args:  cobra.ExactArgs(1),
+	Use:               "set <region>",
+	Short:             "Set the region for the default profile",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeRegions,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		region := args[0]
 
@@ -63,6 +64,30 @@ var regionSetCmd = &cobra.Command{
 		fmt.Fprintln(cmd.OutOrStderr(), tui.SuccessStyle.Render("✓ Region set to '"+region+"' in default profile."))
 		return nil
 	},
+}
+
+func completeRegions(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) != 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	client := ec2.NewFromConfig(cfg)
+	output, err := client.DescribeRegions(context.TODO(), &ec2.DescribeRegionsInput{})
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveError
+	}
+
+	regions := make([]string, len(output.Regions))
+	for i, region := range output.Regions {
+		regions[i] = *region.RegionName
+	}
+
+	return regions, cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {

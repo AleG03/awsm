@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"awsm/internal/aws"
 	"awsm/internal/tui"
@@ -100,7 +101,15 @@ func completeProfiles(cmd *cobra.Command, args []string, toComplete string) ([]s
 		return nil, cobra.ShellCompDirectiveError
 	}
 
-	return profiles, cobra.ShellCompDirectiveNoFileComp
+	// filter out profiles starting with sso-session
+	var filteredProfiles []string
+	for _, profile := range profiles {
+		if !strings.HasPrefix(profile, "sso-session") {
+			filteredProfiles = append(filteredProfiles, profile)
+		}
+	}
+
+	return filteredProfiles, cobra.ShellCompDirectiveNoFileComp
 }
 
 // --- Helper Functions ---

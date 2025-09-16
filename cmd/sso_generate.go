@@ -26,7 +26,8 @@ you have access to, and generates the corresponding AWS profile configurations.
 
 The generated profiles are saved to '~/.aws/config' using the region from the SSO session.
 Existing profiles are automatically updated without prompting.`,
-	Args: cobra.ExactArgs(1),
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeSSOSessions,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runSSOGenerate(args[0])
 	},
