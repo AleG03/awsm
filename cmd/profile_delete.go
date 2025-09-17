@@ -15,9 +15,10 @@ var (
 )
 
 var profileDeleteCmd = &cobra.Command{
-	Use:   "delete <profile-name>",
-	Short: "Delete an AWS profile",
-	Args:  cobra.ExactArgs(1),
+	Use:               "delete <profile-name>",
+	Short:             "Delete an AWS profile",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeProfiles,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profileName := args[0]
 
