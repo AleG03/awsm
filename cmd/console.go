@@ -22,6 +22,7 @@ var (
 	dontOpenBrowser bool
 	useFirefox      bool
 	chromeProfile   string
+	profileName     string
 )
 
 var consoleCmd = &cobra.Command{
@@ -38,16 +39,21 @@ By default, opens in the default browser.
 Use --chrome-profile to open in a specific Chrome profile.
 Use --firefox-container to open in a Firefox container matching your AWS profile name.
 
-Make sure to set a session first with 'awsm profile set <profile-name>'.`,
+Make sure to set a session first with 'awsm profile set <profile-name>' or use --profile flag to specify a profile.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get current profile
-		currentProfile := os.Getenv("AWS_PROFILE")
-		if currentProfile == "" {
-			currentProfile = aws.GetCurrentProfileName()
-		}
-		if currentProfile == "" {
-			return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first")
+		// Get profile to use - either from --profile flag or current profile
+		var currentProfile string
+		if profileName != "" {
+			currentProfile = profileName
+		} else {
+			currentProfile = os.Getenv("AWS_PROFILE")
+			if currentProfile == "" {
+				currentProfile = aws.GetCurrentProfileName()
+			}
+			if currentProfile == "" {
+				return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first or use --profile flag")
+			}
 		}
 
 		// Note: Credential validation will happen when AWS config is loaded
@@ -136,17 +142,10 @@ Make sure to set a session first with 'awsm profile set <profile-name>'.`,
 		if dontOpenBrowser {
 			fmt.Println(loginURL)
 		} else {
-			// If --firefox-container is used, get the current AWS profile name
+			// If --firefox-container is used, use the profile we determined earlier
 			var firefoxContainer string
 			if useFirefox {
-				firefoxContainer = os.Getenv("AWS_PROFILE")
-				if firefoxContainer == "" {
-					// Fallback to checking credentials file
-					firefoxContainer = aws.GetCurrentProfileName()
-					if firefoxContainer == "" {
-						return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first")
-					}
-				}
+				firefoxContainer = currentProfile
 			}
 
 			if err := browser.OpenURL(loginURL, chromeProfile, firefoxContainer); err != nil {
@@ -160,9 +159,33 @@ Make sure to set a session first with 'awsm profile set <profile-name>'.`,
 	},
 }
 
+// profileCompletion provides completion for the --profile flag
+func profileCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	profiles, err := aws.ListProfiles()
+	if err != nil {
+		// If we can't list profiles, return no completions but don't error
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	// Filter profiles that start with the current input
+	var matches []string
+	for _, profile := range profiles {
+		if strings.HasPrefix(strings.ToLower(profile), strings.ToLower(toComplete)) {
+			matches = append(matches, profile)
+		}
+	}
+
+	return matches, cobra.ShellCompDirectiveNoFileComp
+}
+
 func init() {
 	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Don't open the browser, just print the URL")
 	consoleCmd.Flags().BoolVarP(&useFirefox, "firefox-container", "f", false, "Open in Firefox using a container named after the AWS profile")
 	consoleCmd.Flags().StringVarP(&chromeProfile, "chrome-profile", "c", "", "Specify a Chrome profile alias or directory name (e.g., 'work')")
+	consoleCmd.Flags().StringVarP(&profileName, "profile", "p", "", "Specify AWS profile to use (overrides current profile)")
+
+	// Add completion for the profile flag
+	consoleCmd.RegisterFlagCompletionFunc("profile", profileCompletion)
+
 	rootCmd.AddCommand(consoleCmd)
 }
