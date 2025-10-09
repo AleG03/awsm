@@ -411,6 +411,8 @@ func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 		return fmt.Errorf("failed to save config file: %w", err)
 	}
 
+	// Invalidate profile cache since profiles have changed
+	InvalidateProfileCache()
 	return nil
 }
 
@@ -501,10 +503,14 @@ func DeleteProfile(profileName string) error {
 
 		if cfg.HasSection(profileName) {
 			cfg.DeleteSection(profileName)
+			// Invalidate profile cache since profiles have changed
+			InvalidateProfileCache()
 			return saveCredentialsWithDefaultLast(cfg, credentialsPath)
 		}
 	}
 
+	// Invalidate profile cache since profiles have changed
+	InvalidateProfileCache()
 	return nil
 }
 

@@ -159,25 +159,6 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 	},
 }
 
-// profileCompletion provides completion for the --profile flag
-func profileCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	profiles, err := aws.ListProfiles()
-	if err != nil {
-		// If we can't list profiles, return no completions but don't error
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	// Filter profiles that start with the current input
-	var matches []string
-	for _, profile := range profiles {
-		if strings.HasPrefix(strings.ToLower(profile), strings.ToLower(toComplete)) {
-			matches = append(matches, profile)
-		}
-	}
-
-	return matches, cobra.ShellCompDirectiveNoFileComp
-}
-
 func init() {
 	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Don't open the browser, just print the URL")
 	consoleCmd.Flags().BoolVarP(&useFirefox, "firefox-container", "f", false, "Open in Firefox using a container named after the AWS profile")
@@ -185,7 +166,7 @@ func init() {
 	consoleCmd.Flags().StringVarP(&profileName, "profile", "p", "", "Specify AWS profile to use (overrides current profile)")
 
 	// Add completion for the profile flag
-	consoleCmd.RegisterFlagCompletionFunc("profile", profileCompletion)
+	consoleCmd.RegisterFlagCompletionFunc("profile", aws.CompleteProfiles)
 
 	rootCmd.AddCommand(consoleCmd)
 }

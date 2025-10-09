@@ -91,26 +91,10 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 }
 
 // --- Autocompletion Logic ---
-func completeProfiles(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) != 0 {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	profiles, err := aws.ListProfiles()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveError
-	}
-
-	// filter out profiles starting with sso-session
-	var filteredProfiles []string
-	for _, profile := range profiles {
-		if !strings.HasPrefix(profile, "sso-session") {
-			filteredProfiles = append(filteredProfiles, profile)
-		}
-	}
-
-	return filteredProfiles, cobra.ShellCompDirectiveNoFileComp
-}
+// completeProfiles provides completion for profile arguments, excluding sso-session profiles
+var completeProfiles = aws.CompleteProfilesFiltered(func(profile string) bool {
+	return !strings.HasPrefix(profile, "sso-session")
+})
 
 // --- Helper Functions ---
 func checkSSOLoginNeeded(profileName string) (bool, error) {
