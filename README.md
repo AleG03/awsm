@@ -25,6 +25,15 @@ Copy the binary to your PATH and run `awsm` from anywhere.
 For MacOS users, you can also copy the binary into /usr/local/bin and run from everyone.
 For arch linux users, the binary is available in the AUR.
 
+### Using Homebrew
+
+If you have Homebrew installed, you can install awsm with:
+
+```bash
+brew tap aleg03/awsm-tap
+brew install awsm
+```
+
 ### From Source
 
 ```bash

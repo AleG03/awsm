@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"awsm/internal/util"
 	"awsm/internal/aws"
+	"awsm/internal/util"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
