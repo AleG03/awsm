@@ -1,5 +1,12 @@
 project_name: awsm
 
+before:
+  hooks:
+    - mkdir -p completions
+    - sh -c "go run . completion bash > completions/awsm.bash"
+    - sh -c "go run . completion zsh > completions/_awsm"
+    - sh -c "go run . completion fish > completions/awsm.fish"
+
 builds:
   - 
     env:
@@ -26,7 +33,8 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
-      - LICENSE 
+      - LICENSE
+      - completions/* 
 
 
 checksum:
@@ -45,6 +53,35 @@ changelog:
 
 
 release:
-
   draft: false
   prerelease: auto
+
+brews:
+  - 
+    name: awsm
+    repository:
+      owner: AleG03
+      name: homebrew-awsm
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    
+    directory: Formula
+    
+    homepage: "https://github.com/AleG03/awsm"
+    description: "A powerful CLI tool to simplify working with AWS profiles, credentials, and sessions"
+    
+    license: "BUSL-1.1"
+    
+    install: |
+      bin.install "awsm"
+      
+      # Install shell completions
+      bash_completion.install "completions/awsm.bash" => "awsm"
+      zsh_completion.install "completions/_awsm" => "_awsm"
+      fish_completion.install "completions/awsm.fish"
+    
+    test: |
+      system "#{bin}/awsm", "--version"
+    
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
