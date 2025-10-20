@@ -27,6 +27,10 @@ sso_registration_scopes = sso:account:access`,
 		startURL := args[1]
 		region := args[2]
 
+		if !aws.IsValidRegion(region) {
+			return fmt.Errorf("invalid region: %s", region)
+		}
+
 		if err := aws.AddSSOSession(sessionName, startURL, region); err != nil {
 			return fmt.Errorf("failed to add SSO session: %w", err)
 		}
@@ -41,4 +45,10 @@ sso_registration_scopes = sso:account:access`,
 
 func init() {
 	ssoCmd.AddCommand(ssoAddCmd)
+	ssoAddCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 2 {
+			return aws.GetAllRegions(), cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 }

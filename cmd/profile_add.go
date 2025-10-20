@@ -58,6 +58,9 @@ var profileAddIAMUserCmd = &cobra.Command{
 		if strings.TrimSpace(region) == "" {
 			return fmt.Errorf("region is required")
 		}
+		if !aws.IsValidRegion(region) {
+			return fmt.Errorf("invalid region: %s", region)
+		}
 
 		if err := aws.AddIAMUserProfile(profileName, accessKey, secretKey, region); err != nil {
 			return fmt.Errorf("failed to add IAM user profile: %w", err)
@@ -107,6 +110,9 @@ var profileAddIAMRoleCmd = &cobra.Command{
 		region, err := util.PromptForInput("Default region (e.g., us-east-1): ")
 		if err != nil {
 			return err
+		}
+		if !aws.IsValidRegion(region) {
+			return fmt.Errorf("invalid region: %s", region)
 		}
 
 		if err := aws.AddIAMRoleProfile(profileName, roleArn, strings.TrimSpace(sourceProfile), strings.TrimSpace(mfaSerial), region); err != nil {

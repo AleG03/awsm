@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"awsm/internal/util"
+	"awsm/internal/aws"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
@@ -38,6 +39,9 @@ func runSSOGenerate(ssoSession string) error {
 	awsRegion, err := getSSORegionForSession(ssoSession)
 	if err != nil {
 		return fmt.Errorf("failed to get region from SSO session '%s': %w", ssoSession, err)
+	}
+	if !aws.IsValidRegion(awsRegion) {
+		return fmt.Errorf("invalid region in SSO session: %s", awsRegion)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -45,6 +45,9 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 		// Region is optional, continue without it
 		region = ""
 	}
+	if region != "" && !aws.IsValidRegion(region) {
+		return fmt.Errorf("invalid region for profile '%s': %s", profileName, region)
+	}
 
 	// Use spinner for credential acquisition
 	var creds *aws.TempCredentials

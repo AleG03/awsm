@@ -102,14 +102,12 @@ func getCachedProfiles() ([]string, error) {
 	return profiles, nil
 }
 
-
 func InvalidateProfileCache() {
 	profileCacheMutex.Lock()
 	defer profileCacheMutex.Unlock()
 	profileCacheValid = false
 	profileCache = nil
 }
-
 
 func CompleteProfiles(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	profiles, err := getCachedProfiles()

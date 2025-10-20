@@ -18,6 +18,10 @@ var profileChangeRegionCmd = &cobra.Command{
 		profileName := args[0]
 		region := args[1]
 
+		if !aws.IsValidRegion(region) {
+			return fmt.Errorf("invalid region: %s", region)
+		}
+
 		if err := aws.ChangeProfileRegion(profileName, region); err != nil {
 			return fmt.Errorf("failed to change region: %w", err)
 		}
