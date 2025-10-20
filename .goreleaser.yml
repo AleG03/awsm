@@ -8,80 +8,72 @@ before:
     - sh -c "go run . completion fish > completions/awsm.fish"
 
 builds:
-  - 
-    env:
+  - env:
       - CGO_ENABLED=0
     goos:
       - linux
       - windows
       - darwin
     goarch:
-      - amd64 
-      - arm64 
+      - amd64
+      - arm64
 
     main: ./main.go
 
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
-
 archives:
-  - 
-    format_overrides:
+  - format_overrides:
       - goos: windows
         format: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
       - LICENSE
-      - completions/* 
-
+      - completions/*
 
 checksum:
-  name_template: 'checksums.txt'
-
+  name_template: "checksums.txt"
 
 changelog:
   sort: asc
   filters:
-
     exclude:
-      - '^docs:'
-      - '^test:'
-      - 'Merge pull request'
-      - 'Merge branch'
-
+      - "^docs:"
+      - "^test:"
+      - "Merge pull request"
+      - "Merge branch"
 
 release:
   draft: false
   prerelease: auto
 
 brews:
-  - 
-    name: awsm
+  - name: awsm
     repository:
       owner: AleG03
       name: homebrew-awsm
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    
+
     directory: Formula
-    
+
     homepage: "https://github.com/AleG03/awsm"
     description: "CLI tool to simplify AWS profiles, credentials, and sessions"
-    
+
     license: "BUSL-1.1"
-    
+
     install: |
       bin.install "awsm"
       bash_completion.install "completions/awsm.bash" => "awsm"
       zsh_completion.install "completions/_awsm" => "_awsm"
       fish_completion.install "completions/awsm.fish"
-    
+
     test: |
       system "#{bin}/awsm", "--version"
-    
+
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    
+
     skip_upload: false

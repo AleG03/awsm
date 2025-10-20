@@ -30,7 +30,7 @@ For arch linux users, the binary is available in the AUR.
 If you have Homebrew installed, you can install awsm with:
 
 ```bash
-brew tap aleg03/awsm-tap
+brew tap aleg03/awsm
 brew install awsm
 ```
 
