@@ -50,9 +50,12 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Get version
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Extract version
+        id: extract_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Checkout tap repository
         uses: actions/checkout@v4
@@ -64,13 +67,13 @@ jobs:
       - name: Calculate SHA256 for ARM64
         id: sha_arm64
         run: |
-          curl -sL "https://github.com/AleG03/awsm/releases/download/${{ steps.get_version.outputs.VERSION }}/awsm_${{ steps.get_version.outputs.VERSION#v }}_darwin_arm64.tar.gz" | sha256sum | cut -d' ' -f1 > sha_arm64.txt
+          curl -sL "https://github.com/AleG03/awsm/releases/download/${{ steps.extract_version.outputs.TAG }}/awsm_${{ steps.extract_version.outputs.VERSION }}_darwin_arm64.tar.gz" | sha256sum | cut -d' ' -f1 > sha_arm64.txt
           echo "SHA=$(cat sha_arm64.txt)" >> $GITHUB_OUTPUT
 
       - name: Calculate SHA256 for AMD64
         id: sha_amd64
         run: |
-          curl -sL "https://github.com/AleG03/awsm/releases/download/${{ steps.get_version.outputs.VERSION }}/awsm_${{ steps.get_version.outputs.VERSION#v }}_darwin_amd64.tar.gz" | sha256sum | cut -d' ' -f1 > sha_amd64.txt
+          curl -sL "https://github.com/AleG03/awsm/releases/download/${{ steps.extract_version.outputs.TAG }}/awsm_${{ steps.extract_version.outputs.VERSION }}_darwin_amd64.tar.gz" | sha256sum | cut -d' ' -f1 > sha_amd64.txt
           echo "SHA=$(cat sha_amd64.txt)" >> $GITHUB_OUTPUT
 
       - name: Update formula
@@ -80,14 +83,14 @@ jobs:
           class Awsm < Formula
             desc "CLI tool to simplify working with AWS profiles, credentials, and sessions"
             homepage "https://github.com/AleG03/awsm"
-            version "${{ steps.get_version.outputs.VERSION#v }}"
+            version "${{ steps.extract_version.outputs.VERSION }}"
             license "Apache-2.0"
 
             if Hardware::CPU.arm?
-              url "https://github.com/AleG03/awsm/releases/download/${{ steps.get_version.outputs.VERSION }}/awsm_${{ steps.get_version.outputs.VERSION#v }}_darwin_arm64.tar.gz"
+              url "https://github.com/AleG03/awsm/releases/download/${{ steps.extract_version.outputs.TAG }}/awsm_${{ steps.extract_version.outputs.VERSION }}_darwin_arm64.tar.gz"
               sha256 "${{ steps.sha_arm64.outputs.SHA }}"
             else
-              url "https://github.com/AleG03/awsm/releases/download/${{ steps.get_version.outputs.VERSION }}/awsm_${{ steps.get_version.outputs.VERSION#v }}_darwin_amd64.tar.gz"
+              url "https://github.com/AleG03/awsm/releases/download/${{ steps.extract_version.outputs.TAG }}/awsm_${{ steps.extract_version.outputs.VERSION }}_darwin_amd64.tar.gz"
               sha256 "${{ steps.sha_amd64.outputs.SHA }}"
             end
 
@@ -108,5 +111,5 @@ jobs:
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
           git add Formula/awsm.rb
-          git commit -m "Update awsm to ${{ steps.get_version.outputs.VERSION }}"
+          git commit -m "Update awsm to ${{ steps.extract_version.outputs.TAG }}"
           git push
