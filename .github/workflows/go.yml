@@ -110,5 +110,7 @@ jobs:
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
           git add Formula/awsm.rb
-          git commit -m "Update awsm to ${{ steps.extract_version.outputs.TAG }}"
-          git push
+          git commit -m "Update awsm to ${{ steps.extract_version.outputs.TAG }}" || echo "No changes to commit"
+          # Use PAT to push to the tap repo so the github-actions bot (which may not have write) can push
+          git remote set-url origin https://x-access-token:${{ secrets.TAP_TOKEN }}@github.com/AleG03/awsm-tap.git
+          git push origin HEAD:main
