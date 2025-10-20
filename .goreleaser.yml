@@ -67,14 +67,12 @@ brews:
     directory: Formula
     
     homepage: "https://github.com/AleG03/awsm"
-    description: "A powerful CLI tool to simplify working with AWS profiles, credentials, and sessions"
+    description: "CLI tool to simplify AWS profiles, credentials, and sessions"
     
     license: "BUSL-1.1"
     
     install: |
       bin.install "awsm"
-      
-      # Install shell completions
       bash_completion.install "completions/awsm.bash" => "awsm"
       zsh_completion.install "completions/_awsm" => "_awsm"
       fish_completion.install "completions/awsm.fish"
@@ -85,3 +83,5 @@ brews:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
+    
+    skip_upload: false
