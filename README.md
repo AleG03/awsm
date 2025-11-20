@@ -190,6 +190,9 @@ awsm console --firefox-container
 
 **Random Colors and Icons**: When AWSM creates a new Firefox container, it automatically assigns a random color and icon from Firefox's available options. This helps visually distinguish between different AWS profiles. Available colors include: blue, turquoise, green, yellow, orange, red, pink, and purple. Available icons include: fingerprint, briefcase, dollar, cart, circle, gift, vacation, food, fruit, pet, tree, and chill.
 
+#### Zen Container Integration
+
+Same as Firefox, AWSM can open the AWS console in Zen browser containers.
 
 ### Region Management
 
