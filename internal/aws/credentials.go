@@ -63,7 +63,7 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 		}
 		sdkCreds, err := awsCfg.Credentials.Retrieve(context.TODO())
 		if err != nil {
-			if strings.Contains(err.Error(), "token has expired") || strings.Contains(err.Error(), "InvalidGrantException") {
+			if strings.Contains(err.Error(), "token has expired") || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
 				return nil, false, ErrSsoSessionExpired // Return our special error.
 			}
 			return nil, false, err // Return the original error for other issues.

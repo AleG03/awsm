@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"awsm/internal/aws"
+	awsmConfig "awsm/internal/config"
 	"awsm/internal/util"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -108,36 +109,14 @@ func runSSOGenerate(ssoSession string) error {
 	util.SuccessColor.Printf("✔ Found %d accounts.\n", totalAccounts)
 
 	// Read existing config
-	existingConfigBytes, err := os.ReadFile(outputFile)
-	existingConfig := ""
-	if err == nil {
-		existingConfig = string(existingConfigBytes)
+	existingConfig, err := awsmConfig.ReadConfigFile(outputFile)
+	if err != nil {
+		// If file doesn't exist, we'll start with empty config
+		existingConfig = ""
 	}
 
 	// Parse existing profile names and their content
-	existingProfiles := make(map[string]bool)
-	existingProfileContent := make(map[string]string)
-	profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
-
-	for _, match := range profileHeaderRegex.FindAllStringSubmatch(existingConfig, -1) {
-		if len(match) > 1 {
-			existingProfiles[match[1]] = true
-			// Extract the profile content for comparison
-			profileName := match[1]
-			profileStart := strings.Index(existingConfig, match[0])
-			if profileStart != -1 {
-				// Find the end of this profile (next profile or end of file)
-				nextProfileStart := len(existingConfig)
-				for _, nextMatch := range profileHeaderRegex.FindAllStringSubmatch(existingConfig[profileStart+len(match[0]):], -1) {
-					if len(nextMatch) > 1 {
-						nextProfileStart = profileStart + len(match[0]) + strings.Index(existingConfig[profileStart+len(match[0]):], nextMatch[0])
-						break
-					}
-				}
-				existingProfileContent[profileName] = existingConfig[profileStart:nextProfileStart]
-			}
-		}
-	}
+	existingProfiles, existingProfileContent := awsmConfig.ParseExistingProfiles(existingConfig)
 
 	// Build new profiles
 	var newProfilesBuilder strings.Builder
@@ -176,8 +155,8 @@ func runSSOGenerate(ssoSession string) error {
 						// Check if the profile content is different
 						if existingContent, exists := existingProfileContent[profileName]; exists {
 							// Extract just the configuration lines for comparison
-							existingLines := extractProfileConfig(existingContent)
-							newLines := extractProfileConfig(newProfileContent)
+							existingLines := awsmConfig.ExtractProfileConfig(existingContent)
+							newLines := awsmConfig.ExtractProfileConfig(newProfileContent)
 
 							if existingLines == newLines {
 								// Profile is identical, skip it
@@ -187,12 +166,12 @@ func runSSOGenerate(ssoSession string) error {
 								// Profile content is different, update it
 								util.InfoColor.Fprintf(os.Stderr, "    Updating profile '%s' with new configuration\n", profileName)
 								// Remove the old profile from existing config
-								existingConfig = removeProfileFromConfig(existingConfig, profileName)
+								existingConfig = awsmConfig.RemoveProfileFromConfig(existingConfig, profileName)
 							}
 						} else {
 							// Profile exists but we couldn't find its content, update it anyway
 							util.InfoColor.Fprintf(os.Stderr, "    Updating profile '%s'\n", profileName)
-							existingConfig = removeProfileFromConfig(existingConfig, profileName)
+							existingConfig = awsmConfig.RemoveProfileFromConfig(existingConfig, profileName)
 						}
 					}
 
@@ -218,7 +197,7 @@ func runSSOGenerate(ssoSession string) error {
 		}
 
 		// Write the complete config file
-		if err := os.WriteFile(outputFile, []byte(finalConfig), 0600); err != nil {
+		if err := awsmConfig.WriteConfigFile(outputFile, finalConfig); err != nil {
 			return fmt.Errorf("failed to write %s: %w", outputFile, err)
 		}
 
@@ -339,96 +318,6 @@ func findLatestSsoToken(cacheDir string) (string, error) {
 	}
 
 	return validToken, nil
-}
-
-func resolveProfileConflict(profileName, accountId, ssoSession string) (string, bool) {
-	util.WarnColor.Printf("\n⚠ Profile '%s' already exists.\n", profileName)
-	fmt.Println("Choose resolution:")
-	fmt.Println("1. Skip this profile")
-	fmt.Printf("2. Rename to '%s-%s'\n", profileName, accountId)
-	fmt.Printf("3. Rename to '%s-%s'\n", profileName, ssoSession)
-	fmt.Println("4. Enter custom name")
-	fmt.Print("\nEnter choice (1-4): ")
-
-	choice, err := util.PromptForInput("")
-	if err != nil {
-		return "", true
-	}
-
-	switch strings.TrimSpace(choice) {
-	case "1":
-		return "", true
-	case "2":
-		return fmt.Sprintf("%s-%s", profileName, accountId), false
-	case "3":
-		return fmt.Sprintf("%s-%s", profileName, ssoSession), false
-	case "4":
-		customName, err := util.PromptForInput("Enter new profile name: ")
-		if err != nil || strings.TrimSpace(customName) == "" {
-			return "", true
-		}
-		return strings.TrimSpace(customName), false
-	default:
-		util.WarnColor.Println("Invalid choice. Skipping profile.")
-		return "", true
-	}
-}
-
-// extractProfileConfig extracts just the configuration lines from a profile section
-func extractProfileConfig(profileContent string) string {
-	lines := strings.Split(profileContent, "\n")
-	var configLines []string
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// Skip the profile header and empty lines
-		if line != "" && !strings.HasPrefix(line, "[profile ") {
-			configLines = append(configLines, line)
-		}
-	}
-
-	return strings.Join(configLines, "\n")
-}
-
-// removeProfileFromConfig removes a specific profile from the config content
-func removeProfileFromConfig(config, profileName string) string {
-	profileHeaderRegex := regexp.MustCompile(fmt.Sprintf(`(?m)^\[profile %s\]`, regexp.QuoteMeta(profileName)))
-	match := profileHeaderRegex.FindStringIndex(config)
-	if match == nil {
-		return config
-	}
-
-	// Find the start of the profile
-	profileStart := match[0]
-
-	// Find the end of the profile (next profile or end of file)
-	nextProfileRegex := regexp.MustCompile(`(?m)^\[profile [^\]]+\]`)
-	nextMatches := nextProfileRegex.FindAllStringIndex(config[match[1]:], -1)
-
-	var profileEnd int
-	if len(nextMatches) > 0 {
-		profileEnd = match[1] + nextMatches[0][0]
-	} else {
-		profileEnd = len(config)
-	}
-
-	// Remove the profile section
-	return config[:profileStart] + config[profileEnd:]
-}
-
-// extractProfileNamesFromContent extracts profile names from generated profile content
-func extractProfileNamesFromContent(content string) []string {
-	var profileNames []string
-	profileHeaderRegex := regexp.MustCompile(`(?m)^\[profile ([^\]]+)\]`)
-
-	matches := profileHeaderRegex.FindAllStringSubmatch(content, -1)
-	for _, match := range matches {
-		if len(match) > 1 {
-			profileNames = append(profileNames, match[1])
-		}
-	}
-
-	return profileNames
 }
 
 func init() {

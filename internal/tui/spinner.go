@@ -90,6 +90,14 @@ func ShowSpinner(ctx context.Context, message string, fn func() error) error {
 		}
 	}()
 
-	_, err := program.Run()
-	return err
+	m, err := program.Run()
+	if err != nil {
+		return err
+	}
+
+	if model, ok := m.(SpinnerModel); ok {
+		return model.err
+	}
+
+	return nil
 }

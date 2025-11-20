@@ -58,14 +58,49 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 		return spinnerErr
 	})
 
-	if err != nil {
-		if errors.Is(err, aws.ErrSsoSessionExpired) {
-			fmt.Fprintln(os.Stderr, tui.WarningStyle.Render("⚠ SSO session for profile '"+profileName+"' has expired. Please log in again."))
-			os.Exit(1)
-			return nil
+	if err != nil || (creds == nil && !isStatic) {
+		// Check if we should try to login (SSO expired or missing credentials for SSO profile)
+		shouldLogin := false
+		if err != nil && errors.Is(err, aws.ErrSsoSessionExpired) {
+			shouldLogin = true
+		} else if creds == nil && !isStatic {
+			// If no credentials and not static, check if it's an SSO profile
+			if _, ssoErr := aws.GetSsoSessionForProfile(profileName); ssoErr == nil {
+				shouldLogin = true
+			}
 		}
-		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: "+err.Error()))
-		return fmt.Errorf("credential acquisition failed")
+
+		if shouldLogin {
+			// Get SSO session
+			ssoSession, ssoErr := aws.GetSsoSessionForProfile(profileName)
+			if ssoErr != nil {
+				fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error getting SSO session: "+ssoErr.Error()))
+				return fmt.Errorf("failed to get SSO session")
+			}
+
+			// Perform login
+			if loginErr := performSSOLogin(ssoSession); loginErr != nil {
+				return loginErr
+			}
+
+			// Retry getting credentials
+			err = tui.ShowSpinner(context.Background(), fmt.Sprintf("Getting credentials for profile '%s' (retry)", profileName), func() error {
+				var spinnerErr error
+				creds, isStatic, spinnerErr = aws.GetCredentialsForProfile(profileName)
+				return spinnerErr
+			})
+
+			if err != nil {
+				fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error after login: "+err.Error()))
+				return fmt.Errorf("credential acquisition failed after login")
+			}
+		} else if err != nil {
+			fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: "+err.Error()))
+			return fmt.Errorf("credential acquisition failed")
+		} else if creds == nil {
+			fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: No credentials available for profile '"+profileName+"'"))
+			return fmt.Errorf("no credentials available")
+		}
 	}
 
 	if isStatic {
@@ -79,8 +114,7 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 	}
 
 	if creds == nil {
-		fmt.Fprintln(os.Stderr, tui.ErrorStyle.Render("✗ Error: No credentials available for profile '"+profileName+"'"))
-		return fmt.Errorf("no credentials available")
+		return fmt.Errorf("unexpected error: credentials are nil")
 	}
 
 	err = aws.UpdateCredentialsFile(creds, region, profileName)
