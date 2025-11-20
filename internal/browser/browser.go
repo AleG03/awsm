@@ -45,9 +45,9 @@ func getRandomFirefoxIcon() string {
 }
 
 // OpenURL opens a URL in the specified browser profile/container.
-// It takes the URL and either a Chrome profile alias or Firefox container name.
-func OpenURL(targetURL, chromeProfileAlias string, firefoxContainer string) error {
-	if chromeProfileAlias == "" && firefoxContainer == "" {
+// It takes the URL and either a Chrome profile alias, Firefox container name, or Zen container name.
+func OpenURL(targetURL, chromeProfileAlias string, firefoxContainer string, zenContainer string) error {
+	if chromeProfileAlias == "" && firefoxContainer == "" && zenContainer == "" {
 		return browser.OpenURL(targetURL)
 	}
 
@@ -57,6 +57,10 @@ func OpenURL(targetURL, chromeProfileAlias string, firefoxContainer string) erro
 
 	if firefoxContainer != "" {
 		return openURLInFirefoxContainer(targetURL, firefoxContainer)
+	}
+
+	if zenContainer != "" {
+		return openURLInZenContainer(targetURL, zenContainer)
 	}
 
 	return nil
@@ -107,6 +111,45 @@ func openURLInFirefoxContainer(targetURL, containerName string) error {
 			containerURL)
 	case "linux":
 		cmd = exec.Command("firefox",
+			"--new-tab",
+			containerURL)
+	default:
+		return browser.OpenURL(targetURL)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return browser.OpenURL(targetURL)
+	}
+
+	return nil
+}
+
+// openURLInZenContainer opens a URL in a Zen Browser container with random color and icon
+func openURLInZenContainer(targetURL, containerName string) error {
+	// Generate random color and icon for the container
+	randomColor := getRandomFirefoxColor()
+	randomIcon := getRandomFirefoxIcon()
+
+	var cmd *exec.Cmd
+	// Use the extension's URL format with color and icon parameters
+	// Zen Browser supports the same ext+container: URL scheme as Firefox
+	containerURL := fmt.Sprintf("ext+container:name=%s&color=%s&icon=%s&url=%s",
+		url.QueryEscape(containerName),
+		url.QueryEscape(randomColor),
+		url.QueryEscape(randomIcon),
+		url.QueryEscape(targetURL))
+
+	switch runtime.GOOS {
+	case "darwin": // macOS
+		cmd = exec.Command("/Applications/Zen.app/Contents/MacOS/zen",
+			"--new-tab",
+			containerURL)
+	case "windows":
+		cmd = exec.Command("C:\\Program Files\\Zen\\zen.exe",
+			"--new-tab",
+			containerURL)
+	case "linux":
+		cmd = exec.Command("zen",
 			"--new-tab",
 			containerURL)
 	default:
