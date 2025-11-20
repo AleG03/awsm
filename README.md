@@ -475,4 +475,4 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 - [Cobra](https://github.com/spf13/cobra)
 - [Viper](https://github.com/spf13/viper)
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss)
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) 
