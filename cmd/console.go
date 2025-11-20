@@ -21,6 +21,7 @@ import (
 var (
 	dontOpenBrowser bool
 	useFirefox      bool
+	useZen          bool
 	chromeProfile   string
 	profileName     string
 )
@@ -30,7 +31,7 @@ var consoleCmd = &cobra.Command{
 	Short: "Opens the AWS console in your browser",
 	Long: `Generates a federated sign-in URL for the current AWS session and
 automatically opens it in your default browser, a specified Chrome profile,
-or a Firefox Multi-Account Container.
+a Firefox Multi-Account Container, or a Zen Browser container.
 
 The command generates a console URL using your current AWS credentials.
 Make sure your credentials are valid before running this command.
@@ -38,6 +39,7 @@ Make sure your credentials are valid before running this command.
 By default, opens in the default browser.
 Use --chrome-profile to open in a specific Chrome profile.
 Use --firefox-container to open in a Firefox container matching your AWS profile name.
+Use --zen-container to open in a Zen Browser container matching your AWS profile name.
 
 Make sure to set a session first with 'awsm profile set <profile-name>' or use --profile flag to specify a profile.`,
 	Aliases: []string{"c", "open"},
@@ -148,7 +150,13 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 				firefoxContainer = currentProfile
 			}
 
-			if err := browser.OpenURL(loginURL, chromeProfile, firefoxContainer); err != nil {
+			// If --zen-container is used, use the profile we determined earlier
+			var zenContainer string
+			if useZen {
+				zenContainer = currentProfile
+			}
+
+			if err := browser.OpenURL(loginURL, chromeProfile, firefoxContainer, zenContainer); err != nil {
 				fmt.Fprintln(os.Stderr, "Could not open browser automatically. Please copy this URL:")
 				fmt.Println(loginURL)
 				return fmt.Errorf("could not open browser: %w", err)
@@ -162,6 +170,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 func init() {
 	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Don't open the browser, just print the URL")
 	consoleCmd.Flags().BoolVarP(&useFirefox, "firefox-container", "f", false, "Open in Firefox using a container named after the AWS profile")
+	consoleCmd.Flags().BoolVarP(&useZen, "zen-container", "z", false, "Open in Zen Browser using a container named after the AWS profile")
 	consoleCmd.Flags().StringVarP(&chromeProfile, "chrome-profile", "c", "", "Specify a Chrome profile alias or directory name (e.g., 'work')")
 	consoleCmd.Flags().StringVarP(&profileName, "profile", "p", "", "Specify AWS profile to use (overrides current profile)")
 

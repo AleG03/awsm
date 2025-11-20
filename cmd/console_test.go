@@ -29,6 +29,7 @@ func TestConsoleCommand(t *testing.T) {
 	// Test flag initialization
 	foundNoOpen := false
 	foundFirefox := false
+	foundZen := false
 	foundChrome := false
 
 	flagUsages := consoleCmd.Flags().FlagUsages()
@@ -38,6 +39,9 @@ func TestConsoleCommand(t *testing.T) {
 		}
 		if strings.Contains(flagUsages, "firefox-container") {
 			foundFirefox = true
+		}
+		if strings.Contains(flagUsages, "zen-container") {
+			foundZen = true
 		}
 		if strings.Contains(flagUsages, "chrome-profile") {
 			foundChrome = true
@@ -49,6 +53,9 @@ func TestConsoleCommand(t *testing.T) {
 	}
 	if !foundFirefox {
 		t.Error("Command should have a firefox-container flag")
+	}
+	if !foundZen {
+		t.Error("Command should have a zen-container flag")
 	}
 	if !foundChrome {
 		t.Error("Command should have a chrome-profile flag")
