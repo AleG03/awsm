@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 
 	"awsm/internal/aws"
@@ -71,9 +72,34 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		if err != nil {
 			// Check if this is a credential expiration error
 			if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
-				return fmt.Errorf("credentials are expired: %w\n\nPlease try:\n  awsm sso login <session-name>\n  aws sso login --sso-session <session-name>", err)
+				// Try to refresh the session
+				util.WarnColor.Fprintln(os.Stderr, "Credentials expired. Attempting to refresh session...")
+
+				// Get SSO session name for the current profile
+				ssoSession, err := aws.GetSsoSessionForProfile(currentProfile)
+				if err != nil {
+					return fmt.Errorf("failed to get SSO session for profile '%s': %w", currentProfile, err)
+				}
+
+				// Trigger SSO login
+				util.InfoColor.Fprintf(os.Stderr, "Logging in to SSO session: %s\n", util.BoldColor.Sprint(ssoSession))
+				loginCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
+				loginCmd.Stdin = os.Stdin
+				loginCmd.Stdout = os.Stderr
+				loginCmd.Stderr = os.Stderr
+
+				if err := loginCmd.Run(); err != nil {
+					return fmt.Errorf("failed to refresh session: %w", err)
+				}
+
+				// Retry retrieving credentials
+				creds, err = awsCfg.Credentials.Retrieve(context.TODO())
+				if err != nil {
+					return fmt.Errorf("failed to retrieve credentials after refresh: %w", err)
+				}
+			} else {
+				return fmt.Errorf("failed to retrieve credentials for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
 			}
-			return fmt.Errorf("failed to retrieve credentials for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
 		}
 
 		if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
