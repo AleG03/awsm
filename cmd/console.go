@@ -114,6 +114,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		formData := url.Values{}
 		formData.Set("Action", "getSigninToken")
 		formData.Set("Session", string(sessionJSON))
+		formData.Set("SessionDuration", "43200")
 
 		resp, err := http.PostForm("https://signin.aws.amazon.com/federation", formData)
 		if err != nil {
