@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,11 +68,11 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 			return fmt.Errorf("failed to load AWS config for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
 		}
 
-		// Retrieve credentials
-		creds, err := awsCfg.Credentials.Retrieve(context.TODO())
+		// Retrieve credentials using internal helper to ensure freshness for chained profiles
+		tempCreds, _, err := aws.GetCredentialsForProfile(currentProfile)
 		if err != nil {
 			// Check if this is a credential expiration error
-			if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
+			if errors.Is(err, aws.ErrSsoSessionExpired) || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
 				// Try to refresh the session
 				util.WarnColor.Fprintln(os.Stderr, "Credentials expired. Attempting to refresh session...")
 
@@ -93,7 +94,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 				}
 
 				// Retry retrieving credentials
-				creds, err = awsCfg.Credentials.Retrieve(context.TODO())
+				tempCreds, _, err = aws.GetCredentialsForProfile(currentProfile)
 				if err != nil {
 					return fmt.Errorf("failed to retrieve credentials after refresh: %w", err)
 				}
@@ -102,10 +103,10 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 			}
 		}
 
-		if creds.AccessKeyID == "" || creds.SecretAccessKey == "" {
+		if tempCreds.AccessKeyId == "" || tempCreds.SecretAccessKey == "" {
 			return fmt.Errorf("invalid credentials found for profile '%s'. Please run:\n  awsm sso login <session-name>\n  awsm profile set <profile-name>", currentProfile)
 		}
-		sessionJSON, err := json.Marshal(map[string]string{"sessionId": creds.AccessKeyID, "sessionKey": creds.SecretAccessKey, "sessionToken": creds.SessionToken})
+		sessionJSON, err := json.Marshal(map[string]string{"sessionId": tempCreds.AccessKeyId, "sessionKey": tempCreds.SecretAccessKey, "sessionToken": tempCreds.SessionToken})
 		if err != nil {
 			return fmt.Errorf("failed to create session JSON: %w", err)
 		}
@@ -114,7 +115,12 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		formData := url.Values{}
 		formData.Set("Action", "getSigninToken")
 		formData.Set("Session", string(sessionJSON))
-		formData.Set("SessionDuration", "43200")
+		// Determine session duration (chained profiles are limited to 1 hour)
+		// For chained profiles, we don't request a specific duration, letting AWS use the remaining session time
+		isChained, _ := aws.IsChainedProfile(currentProfile)
+		if !isChained {
+			formData.Set("SessionDuration", "43200") // 12 hours for standard profiles
+		}
 
 		resp, err := http.PostForm("https://signin.aws.amazon.com/federation", formData)
 		if err != nil {

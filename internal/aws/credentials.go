@@ -27,6 +27,7 @@ type TempCredentials struct {
 	AccessKeyId     string
 	SecretAccessKey string
 	SessionToken    string
+	Expires         time.Time
 }
 
 // profileConfig holds the relevant configuration details extracted from a profile.
@@ -54,6 +55,7 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 			AccessKeyId:     *tempCreds.AccessKeyId,
 			SecretAccessKey: *tempCreds.SecretAccessKey,
 			SessionToken:    *tempCreds.SessionToken,
+			Expires:         *tempCreds.Expiration,
 		}, false, nil
 
 	case "sso":
@@ -72,6 +74,7 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 			AccessKeyId:     sdkCreds.AccessKeyID,
 			SecretAccessKey: sdkCreds.SecretAccessKey,
 			SessionToken:    sdkCreds.SessionToken,
+			Expires:         sdkCreds.Expires,
 		}, false, nil
 
 	case "iam-user":
@@ -150,6 +153,18 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	}
 
 	return nil, "unknown", fmt.Errorf("could not determine type of profile '%s'", profileName)
+}
+
+// IsChainedProfile checks if a profile is a chained role (references another source profile).
+func IsChainedProfile(profileName string) (bool, error) {
+	pConfig, pType, err := inspectProfile(profileName)
+	if err != nil {
+		return false, err
+	}
+	if pType == "iam" && pConfig.SourceProfile != "" && pConfig.RoleArn != "" {
+		return true, nil
+	}
+	return false, nil
 }
 
 // handleIamProfile contains the logic for IAM-based profiles (MFA/role assumption).
