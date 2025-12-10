@@ -64,8 +64,17 @@ func ProfileExists(profileName string) (bool, error) {
 	return false, nil
 }
 
-// GetSsoSessionForProfile finds the sso_session value for a given profile.
+// GetSsoSessionForProfile finds the sso_session value for a given profile, traversing source_profile if needed.
 func GetSsoSessionForProfile(profileName string) (string, error) {
+	return getSsoSessionRecursive(profileName, make(map[string]bool))
+}
+
+func getSsoSessionRecursive(profileName string, visited map[string]bool) (string, error) {
+	if visited[profileName] {
+		return "", fmt.Errorf("circular profile dependency detected at '%s'", profileName)
+	}
+	visited[profileName] = true
+
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
 		return "", err
@@ -85,16 +94,24 @@ func GetSsoSessionForProfile(profileName string) (string, error) {
 		}
 	}
 
-	// Get the value of the key directly. If the key doesn't exist, this returns an empty string.
-	ssoSessionValue := section.Key("sso_session").String()
-
-	// Check if the returned string is empty.
-	if ssoSessionValue == "" {
-		return "", fmt.Errorf("profile '%s' is not an SSO profile (missing 'sso_session' configuration)", profileName)
+	// 1. Check for sso_session directly
+	if section.HasKey("sso_session") {
+		return section.Key("sso_session").String(), nil
 	}
 
-	// If we get here, the value is valid. Return it.
-	return ssoSessionValue, nil
+	// 2. Check for source_profile and recurse
+	if section.HasKey("source_profile") {
+		sourceProfile := section.Key("source_profile").String()
+		authSession, err := getSsoSessionRecursive(sourceProfile, visited)
+		if err == nil {
+			return authSession, nil
+		}
+		// If recursion failed (e.g. source profile doesn't have SSO session either),
+		// we return the error to the caller.
+		return "", fmt.Errorf("failed to find SSO session in source profile '%s': %w", sourceProfile, err)
+	}
+
+	return "", fmt.Errorf("profile '%s' is not an SSO profile (missing 'sso_session' configuration)", profileName)
 }
 
 // ProfileType represents the type of AWS profile

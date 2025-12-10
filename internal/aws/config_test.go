@@ -73,3 +73,70 @@ func TestProfileInfo(t *testing.T) {
 		t.Error("Expected profile to be active")
 	}
 }
+
+func TestGetSsoSessionForProfile_Chained(t *testing.T) {
+	// Create a temporary config file
+	content := `
+[profile sso-profile]
+sso_session = my-session
+sso_account_id = 123456789012
+sso_role_name = Admin
+region = us-east-1
+
+[profile intermediate-profile]
+source_profile = sso-profile
+role_arn = arn:aws:iam::123456789012:role/RoleA
+
+[profile leaf-profile]
+source_profile = intermediate-profile
+role_arn = arn:aws:iam::123456789012:role/RoleB
+
+[sso-session my-session]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_registration_scopes = sso:account:access
+`
+	tmpfile, err := os.CreateTemp("", "aws-config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name()) // clean up
+
+	if _, err := tmpfile.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpfile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override config path
+	os.Setenv("AWS_CONFIG_FILE", tmpfile.Name())
+	defer os.Unsetenv("AWS_CONFIG_FILE")
+
+	// Test case 1: Direct SSO profile
+	session, err := GetSsoSessionForProfile("sso-profile")
+	if err != nil {
+		t.Errorf("Failed to get session for sso-profile: %v", err)
+	}
+	if session != "my-session" {
+		t.Errorf("Expected session 'my-session' for sso-profile, got '%s'", session)
+	}
+
+	// Test case 2: Chained profile (1 level)
+	session, err = GetSsoSessionForProfile("intermediate-profile")
+	if err != nil {
+		t.Errorf("Failed to get session for intermediate-profile: %v", err)
+	}
+	if session != "my-session" {
+		t.Errorf("Expected session 'my-session' for intermediate-profile, got '%s'", session)
+	}
+
+	// Test case 3: Chained profile (2 levels)
+	session, err = GetSsoSessionForProfile("leaf-profile")
+	if err != nil {
+		t.Errorf("Failed to get session for leaf-profile: %v", err)
+	}
+	if session != "my-session" {
+		t.Errorf("Expected session 'my-session' for leaf-profile, got '%s'", session)
+	}
+}
