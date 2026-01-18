@@ -22,7 +22,8 @@ type ExportData struct {
 }
 
 var (
-	importForce bool
+	importForce        bool
+	importRestoreFiles bool
 )
 
 var importCmd = &cobra.Command{
@@ -61,7 +62,28 @@ var importCmd = &cobra.Command{
 			}
 		}
 
-		// Import SSO sessions first
+		// Check for restore mode
+		if importRestoreFiles {
+			if !importForce {
+				confirm, err := util.PromptForInput("WARNING: --restore-files will OVERWRITE your local config and credentials files entirely. Continue? (y/N): ")
+				if err != nil {
+					return err
+				}
+				if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+					util.InfoColor.Println("Import cancelled")
+					return nil
+				}
+			}
+
+			if err := aws.RestoreConfigFiles(exportData.ConfigFile, exportData.CredentialsFile); err != nil {
+				return fmt.Errorf("failed to restore files: %w", err)
+			}
+
+			util.SuccessColor.Println("✔ AWS configuration files restored successfully (original files moved to .bak)")
+			return nil
+		}
+
+		// Import SSO sessions first (Merge Mode)
 		importedSessions := 0
 		for _, session := range exportData.SSOSessions {
 			if err := aws.ImportSSOSession(session); err != nil {
@@ -72,7 +94,7 @@ var importCmd = &cobra.Command{
 			}
 		}
 
-		// Import profiles
+		// Import profiles (Merge Mode)
 		importedProfiles := 0
 		for _, profile := range exportData.Profiles {
 			if err := aws.ImportProfile(profile); err != nil {
@@ -83,7 +105,7 @@ var importCmd = &cobra.Command{
 			}
 		}
 
-		util.SuccessColor.Printf("✔ Import complete: %d profiles, %d SSO sessions imported\n",
+		util.SuccessColor.Printf("✔ Import complete: %d profiles, %d SSO sessions imported (Merge Mode)\n",
 			importedProfiles, importedSessions)
 		return nil
 	},
@@ -91,5 +113,6 @@ var importCmd = &cobra.Command{
 
 func init() {
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "Force import without confirmation")
+	importCmd.Flags().BoolVar(&importRestoreFiles, "restore-files", false, "Restore exact config and credentials files (overwrites everything)")
 	rootCmd.AddCommand(importCmd)
 }

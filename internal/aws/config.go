@@ -22,29 +22,41 @@ func GetAWSConfigPath() (string, error) {
 	return filepath.Join(home, ".aws", "config"), nil
 }
 
-// ListProfiles lists all profiles from the AWS config file.
+// ListProfiles lists all profiles from both the AWS config and credentials files.
 func ListProfiles() ([]string, error) {
+	profilesMap := make(map[string]bool)
+
+	// Load config file
 	configPath, err := GetAWSConfigPath()
-	if err != nil {
-		return nil, err
+	if err == nil {
+		if cfg, err := ini.Load(configPath); err == nil {
+			for _, section := range cfg.Sections() {
+				name := section.Name()
+				if name == "DEFAULT" || strings.HasPrefix(name, "sso-session ") {
+					continue
+				}
+				profilesMap[strings.TrimPrefix(name, "profile ")] = true
+			}
+		}
 	}
 
-	cfg, err := ini.Load(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []string{}, nil
+	// Load credentials file
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err == nil {
+		if cfg, err := ini.Load(credentialsPath); err == nil {
+			for _, section := range cfg.Sections() {
+				name := section.Name()
+				if name == "DEFAULT" {
+					continue
+				}
+				profilesMap[name] = true
+			}
 		}
-		return nil, fmt.Errorf("failed to read AWS config file at %s: %w", configPath, err)
 	}
 
 	var profiles []string
-	for _, section := range cfg.Sections() {
-		name := section.Name()
-		if name == "DEFAULT" {
-			continue
-		}
-		profileName := strings.TrimPrefix(name, "profile ")
-		profiles = append(profiles, profileName)
+	for name := range profilesMap {
+		profiles = append(profiles, name)
 	}
 
 	return profiles, nil
@@ -152,7 +164,7 @@ func getProfileType(section *ini.Section) ProfileType {
 	return ProfileTypeKey
 }
 
-// ListProfilesDetailed returns detailed information about all AWS profiles
+// ListProfilesDetailed returns detailed information about all AWS profiles from both config and credentials files
 func ListProfilesDetailed() ([]ProfileInfo, error) {
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
@@ -160,11 +172,18 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 	}
 
 	cfg, err := ini.Load(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []ProfileInfo{}, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to read AWS config file at %s: %w", configPath, err)
+	}
+
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return nil, err
+	}
+
+	credCfg, err := ini.Load(credentialsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to read AWS credentials file at %s: %w", credentialsPath, err)
 	}
 
 	// Get current active profile from credentials file or environment
@@ -173,50 +192,67 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 		activeProfile = os.Getenv("AWS_PROFILE")
 	}
 
-	var profiles []ProfileInfo
-	for _, section := range cfg.Sections() {
-		name := section.Name()
-		if name == "DEFAULT" {
-			continue
-		}
+	profilesMap := make(map[string]ProfileInfo)
+	processedInConfig := make(map[string]bool)
 
-		profileName := strings.TrimPrefix(name, "profile ")
-		if profileName == name {
-			// Skip SSO session sections
-			if strings.HasPrefix(name, "sso-session") {
+	// 1. Process config file (main source of truth for structure)
+	if cfg != nil {
+		for _, section := range cfg.Sections() {
+			name := section.Name()
+			if name == "DEFAULT" || strings.HasPrefix(name, "sso-session ") {
 				continue
 			}
-		}
 
-		profile := ProfileInfo{
-			Name:          profileName,
-			Type:          getProfileType(section),
-			Region:        section.Key("region").String(),
-			RoleARN:       section.Key("role_arn").String(),
-			SourceProfile: section.Key("source_profile").String(),
-			SSOStartURL:   section.Key("sso_start_url").String(),
-			SSORegion:     section.Key("sso_region").String(),
-			SSOAccountID:  section.Key("sso_account_id").String(),
-			SSORoleName:   section.Key("sso_role_name").String(),
-			SSOSession:    section.Key("sso_session").String(),
-			MFASerial:     section.Key("mfa_serial").String(),
-			IsActive:      profileName == activeProfile,
-		}
+			profileName := strings.TrimPrefix(name, "profile ")
+			profile := ProfileInfo{
+				Name:          profileName,
+				Type:          getProfileType(section),
+				Region:        section.Key("region").String(),
+				RoleARN:       section.Key("role_arn").String(),
+				SourceProfile: section.Key("source_profile").String(),
+				SSOStartURL:   section.Key("sso_start_url").String(),
+				SSORegion:     section.Key("sso_region").String(),
+				SSOAccountID:  section.Key("sso_account_id").String(),
+				SSORoleName:   section.Key("sso_role_name").String(),
+				SSOSession:    section.Key("sso_session").String(),
+				MFASerial:     section.Key("mfa_serial").String(),
+				IsActive:      profileName == activeProfile,
+			}
 
-		// For IAM user profiles, get credentials from credentials file
-		if profile.Type == ProfileTypeKey {
-			credentialsPath, err := GetAWSCredentialsPath()
-			if err == nil {
-				if credCfg, err := ini.Load(credentialsPath); err == nil {
-					if credSection, err := credCfg.GetSection(profileName); err == nil {
-						profile.AccessKey = credSection.Key("aws_access_key_id").String()
-						profile.SecretKey = credSection.Key("aws_secret_access_key").String()
-					}
+			// Add credentials if it's a key profile
+			if profile.Type == ProfileTypeKey && credCfg != nil {
+				if credSection, err := credCfg.GetSection(profileName); err == nil {
+					profile.AccessKey = credSection.Key("aws_access_key_id").String()
+					profile.SecretKey = credSection.Key("aws_secret_access_key").String()
 				}
 			}
-		}
 
-		profiles = append(profiles, profile)
+			profilesMap[profileName] = profile
+			processedInConfig[profileName] = true
+		}
+	}
+
+	// 2. Process credentials file for profiles that DON'T exist in config
+	if credCfg != nil {
+		for _, section := range credCfg.Sections() {
+			name := section.Name()
+			if name == "DEFAULT" || processedInConfig[name] {
+				continue
+			}
+
+			profilesMap[name] = ProfileInfo{
+				Name:      name,
+				Type:      ProfileTypeKey,
+				AccessKey: section.Key("aws_access_key_id").String(),
+				SecretKey: section.Key("aws_secret_access_key").String(),
+				IsActive:  name == activeProfile,
+			}
+		}
+	}
+
+	var profiles []ProfileInfo
+	for _, p := range profilesMap {
+		profiles = append(profiles, p)
 	}
 
 	return profiles, nil
@@ -740,5 +776,53 @@ func saveCredentialsWithDefaultLast(cfg *ini.File, credentialsPath string) error
 		return cfg.SaveTo(credentialsPath)
 	}
 
+	return nil
+}
+
+// RestoreConfigFiles restores the AWS config and credentials files from raw content
+func RestoreConfigFiles(configContent, credentialsContent string) error {
+	// 1. Get paths
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	// 2. Create .aws directory if it doesn't exist
+	awsDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(awsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
+	// 3. Backup existing files if they exist
+	if _, err := os.Stat(configPath); err == nil {
+		_ = os.Remove(configPath + ".bak") // Ignore error if bak doesn't exist
+		if err := os.Rename(configPath, configPath+".bak"); err != nil {
+			return fmt.Errorf("failed to backup config file: %w", err)
+		}
+	}
+	if _, err := os.Stat(credentialsPath); err == nil {
+		_ = os.Remove(credentialsPath + ".bak") // Ignore error if bak doesn't exist
+		if err := os.Rename(credentialsPath, credentialsPath+".bak"); err != nil {
+			return fmt.Errorf("failed to backup credentials file: %w", err)
+		}
+	}
+
+	// 4. Write new content
+	if configContent != "" {
+		if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+			return fmt.Errorf("failed to write config file: %w", err)
+		}
+	}
+	if credentialsContent != "" {
+		if err := os.WriteFile(credentialsPath, []byte(credentialsContent), 0600); err != nil {
+			return fmt.Errorf("failed to write credentials file: %w", err)
+		}
+	}
+
+	InvalidateProfileCache()
 	return nil
 }
