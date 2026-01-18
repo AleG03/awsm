@@ -9,6 +9,7 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 - **MFA Support**: Streamlined MFA token handling for IAM profiles
 - **Smart Conflict Resolution**: Intelligent handling of profile name conflicts during creation
 - **Console Access**: Open the AWS console in your browser with proper credentials
+- **Connect & Port Forwarding**: Connect to EC2 instances via SSM and setup advanced port forwarding (RDS, remote hosts)
 - **Region Management**: Easily switch between AWS regions
 - **Search & Discovery**: Powerful search across profiles, account IDs, and SSO sessions with partial matching
 - **Browser Integration**: Open the console in specific Chrome profiles or Firefox containers
@@ -193,6 +194,49 @@ awsm console --firefox-container
 #### Zen Container Integration
 
 Same as Firefox, AWSM can open the AWS console in Zen browser containers.
+
+### Connect & Port Forwarding
+
+AWSM provides a `connect` command (aliased as `ssm` or `con`) to connect to your EC2 instances via AWS Systems Manager (SSM) Session Manager without needing SSH keys or open inbound ports.
+
+It also supports advanced port forwarding capabilities, including forwarding to remote hosts (like RDS databases) through an EC2 bastion.
+
+#### Basic Usage
+
+```bash
+# Connect to an instance (opens interactive shell)
+awsm connect i-0123456789abcdef0
+
+# Select an instance interactively from a list of running instances
+awsm connect
+```
+
+#### Port Forwarding
+
+```bash
+# Forward a remote port to your local machine
+awsm connect i-0123456789abcdef0 --port-forwarding --remote-port 80 --local-port 8080
+
+# Forward to a remote host (e.g., RDS) via the instance
+awsm connect i-0123456789abcdef0 -p -r 5432 -H my-db.cluster-c1gqquowm81q.eu-west-1.rds.amazonaws.com
+```
+
+#### Configuration Files
+
+You can define your connection parameters in a JSON file for easy reuse:
+
+```bash
+# connect.json
+{
+  "instance_id": "i-0d7211b09c641f135",
+  "remote_host": "database-1.cluster-xxx.rds.amazonaws.com",
+  "remote_port": 5432,
+  "local_port": 5432
+}
+
+# Use the config file
+awsm connect -f connect.json
+```
 
 ### Region Management
 
@@ -435,6 +479,13 @@ For commercial licensing before 2028, please contact gc.ale03@gmail.com.
 - Chrome profile support with custom aliases
 - Firefox Multi-Account Container integration
 - Automatic region detection for console URLs
+
+### Connect & Port Forwarding
+- **Interactive Selection**: Beautiful selector for running EC2 instances with state and IP information
+- **Advanced Forwarding**: Support for `AWS-StartPortForwardingSessionToRemoteHost` and `AWS-StartPortForwardingSession`
+- **Configurable**: Support for JSON configuration files for complex tunnel setups
+- **Self-Healing**: Automatically detects missing `session-manager-plugin` and provides installation links
+- **Security First**: Proactive warnings when trying to bind to privileged ports (< 1024) without root
 
 ### Shell Completion
 - Tab completion for all commands and flags
