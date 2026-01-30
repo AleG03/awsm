@@ -35,7 +35,7 @@ func GetCredentialsForProfile(profileName string) (creds *aws.TempCredentials, i
 		return handleIAMProfile(profileName)
 	}
 
-	if section.HasKey("sso_session") {
+	if section.HasKey("sso_session") || section.HasKey("credential_process") {
 		return handleSSOProfile(profileName)
 	}
 

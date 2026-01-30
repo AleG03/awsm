@@ -130,9 +130,10 @@ func getSsoSessionRecursive(profileName string, visited map[string]bool) (string
 type ProfileType string
 
 const (
-	ProfileTypeSSO ProfileType = "SSO"
-	ProfileTypeIAM ProfileType = "IAM"
-	ProfileTypeKey ProfileType = "Key"
+	ProfileTypeSSO     ProfileType = "SSO"
+	ProfileTypeIAM     ProfileType = "IAM"
+	ProfileTypeKey     ProfileType = "Key"
+	ProfileTypeProcess ProfileType = "Process"
 )
 
 // ProfileInfo contains detailed information about an AWS profile
@@ -160,6 +161,9 @@ func getProfileType(section *ini.Section) ProfileType {
 	}
 	if section.HasKey("role_arn") {
 		return ProfileTypeIAM
+	}
+	if section.HasKey("credential_process") {
+		return ProfileTypeProcess
 	}
 	return ProfileTypeKey
 }

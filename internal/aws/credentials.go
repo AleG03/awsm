@@ -58,10 +58,10 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 			Expires:         *tempCreds.Expiration,
 		}, false, nil
 
-	case "sso":
+	case "sso", "credential-process":
 		awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(profileName))
 		if err != nil {
-			return nil, false, fmt.Errorf("failed to load AWS config for SSO profile: %w", err)
+			return nil, false, fmt.Errorf("failed to load AWS config for profile: %w", err)
 		}
 		sdkCreds, err := awsCfg.Credentials.Retrieve(context.TODO())
 		if err != nil {
@@ -135,6 +135,9 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	}
 	if section.HasKey("sso_session") {
 		return pConfig, "sso", nil
+	}
+	if section.HasKey("credential_process") {
+		return pConfig, "credential-process", nil
 	}
 	if section.HasKey("aws_access_key_id") {
 		return pConfig, "iam-user", nil
