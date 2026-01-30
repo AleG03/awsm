@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"awsm/internal/aws"
 	"awsm/internal/browser"
@@ -69,7 +70,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		}
 
 		// Retrieve credentials using internal helper to ensure freshness for chained profiles
-		tempCreds, _, err := aws.GetCredentialsForProfile(currentProfile)
+		tempCreds, isStatic, err := aws.GetCredentialsForProfile(currentProfile)
 		if err != nil {
 			// Check if this is a credential expiration error
 			if errors.Is(err, aws.ErrSsoSessionExpired) || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
@@ -94,7 +95,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 				}
 
 				// Retry retrieving credentials
-				tempCreds, _, err = aws.GetCredentialsForProfile(currentProfile)
+				tempCreds, isStatic, err = aws.GetCredentialsForProfile(currentProfile)
 				if err != nil {
 					return fmt.Errorf("failed to retrieve credentials after refresh: %w", err)
 				}
@@ -115,11 +116,25 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		formData := url.Values{}
 		formData.Set("Action", "getSigninToken")
 		formData.Set("Session", string(sessionJSON))
-		// Determine session duration (chained profiles are limited to 1 hour)
-		// For chained profiles, we don't request a specific duration, letting AWS use the remaining session time
-		isChained, _ := aws.IsChainedProfile(currentProfile)
-		if !isChained {
+		// Determine session duration
+		if isStatic {
 			formData.Set("SessionDuration", "43200") // 12 hours for standard profiles
+		} else if !tempCreds.Expires.IsZero() {
+			// For temporary credentials, set duration to remaining time (capped at 12 hours)
+			remaining := int(time.Until(tempCreds.Expires).Seconds())
+			if remaining > 0 {
+				duration := remaining
+				if duration > 43200 {
+					duration = 43200
+				}
+				// Use a small buffer to avoid 400 errors from clock skew
+				if duration > 60 {
+					duration -= 60
+				}
+				if duration >= 900 {
+					formData.Set("SessionDuration", fmt.Sprintf("%d", duration))
+				}
+			}
 		}
 
 		resp, err := http.PostForm("https://signin.aws.amazon.com/federation", formData)

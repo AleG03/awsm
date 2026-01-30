@@ -77,10 +77,21 @@ func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isSta
 			Expires:         sdkCreds.Expires,
 		}, false, nil
 
-	case "iam-user":
-		return nil, true, nil
-	case "static":
-		return nil, true, nil
+	case "iam-user", "static":
+		awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(profileName))
+		if err != nil {
+			return nil, true, fmt.Errorf("failed to load AWS config for static profile: %w", err)
+		}
+		sdkCreds, err := awsCfg.Credentials.Retrieve(context.TODO())
+		if err != nil {
+			return nil, true, fmt.Errorf("failed to retrieve static credentials: %w", err)
+		}
+		return &TempCredentials{
+			AccessKeyId:     sdkCreds.AccessKeyID,
+			SecretAccessKey: sdkCreds.SecretAccessKey,
+			SessionToken:    sdkCreds.SessionToken,
+			Expires:         sdkCreds.Expires,
+		}, true, nil
 
 	default:
 		return nil, false, fmt.Errorf("unknown profile type for '%s'", profileName)
