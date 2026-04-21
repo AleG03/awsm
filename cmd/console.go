@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +16,6 @@ import (
 	"awsm/internal/browser"
 	"awsm/internal/util"
 
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/spf13/cobra"
 )
 
@@ -61,16 +59,15 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 			}
 		}
 
-		// Note: Credential validation will happen when AWS config is loaded
-
-		// Load AWS config with the current profile
-		awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(currentProfile))
-		if err != nil {
-			return fmt.Errorf("failed to load AWS config for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
+		// Check if profile needs MFA and prompt before any SDK call
+		var mfaToken string
+		if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(currentProfile); mfaErr == nil && needsMFA {
+			prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(mfaSerial))
+			mfaToken, _ = util.PromptForInput(prompt)
 		}
 
 		// Retrieve credentials using internal helper to ensure freshness for chained profiles
-		tempCreds, isStatic, err := aws.GetCredentialsForProfile(currentProfile)
+		tempCreds, isStatic, err := aws.GetCredentialsForProfile(currentProfile, mfaToken)
 		if err != nil {
 			// Check if this is a credential expiration error
 			if errors.Is(err, aws.ErrSsoSessionExpired) || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
@@ -180,7 +177,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		}
 		region := os.Getenv("AWS_REGION")
 		if region == "" {
-			region = awsCfg.Region
+			region, _ = aws.GetProfileRegion(currentProfile)
 		}
 		if region == "" {
 			region = "us-east-1"
