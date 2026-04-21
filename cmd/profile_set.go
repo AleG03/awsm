@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"awsm/internal/aws"
@@ -29,16 +28,6 @@ var profileSetCmd = &cobra.Command{
 func runProfileSet(cmd *cobra.Command, args []string) error {
 	profileName := args[0]
 
-	// Check if it's an SSO profile and handle login if needed
-	if ssoSession, err := aws.GetSsoSessionForProfile(profileName); err == nil {
-		// It's an SSO profile, check if login is needed
-		if needsLogin, checkErr := checkSSOLoginNeeded(profileName); checkErr == nil && needsLogin {
-			if loginErr := performSSOLogin(ssoSession); loginErr != nil {
-				return loginErr
-			}
-		}
-	}
-
 	// Get profile region first
 	region, err := aws.GetProfileRegion(profileName)
 	if err != nil {
@@ -51,8 +40,9 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 
 	// Check if profile needs MFA and prompt before starting the spinner
 	// (the spinner captures stdin, preventing interactive input)
+	// Skip if we have valid cached credentials
 	var mfaToken string
-	if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(profileName); mfaErr == nil && needsMFA {
+	if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(profileName); mfaErr == nil && needsMFA && !aws.HasValidCachedCredentials(profileName) {
 		prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(mfaSerial))
 		mfaToken, err = util.PromptForInput(prompt)
 		if err != nil {
@@ -90,7 +80,7 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 			}
 
 			// Perform login
-			if loginErr := performSSOLogin(ssoSession); loginErr != nil {
+			if loginErr := aws.PerformSSOLogin(ssoSession); loginErr != nil {
 				return loginErr
 			}
 
@@ -143,33 +133,6 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 var completeProfiles = aws.CompleteProfilesFiltered(func(profile string) bool {
 	return !strings.HasPrefix(profile, "sso-session")
 })
-
-// --- Helper Functions ---
-func checkSSOLoginNeeded(profileName string) (bool, error) {
-	// Try to get credentials to see if SSO session is valid
-	_, _, err := aws.GetCredentialsForProfile(profileName)
-	if err != nil && errors.Is(err, aws.ErrSsoSessionExpired) {
-		return true, nil
-	}
-	return false, err
-}
-
-func performSSOLogin(ssoSession string) error {
-	util.InfoColor.Fprintf(os.Stderr, "SSO session expired. Attempting login for session: %s\n", util.BoldColor.Sprint(ssoSession))
-	util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
-
-	awsCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
-	awsCmd.Stdin = os.Stdin
-	awsCmd.Stdout = os.Stderr
-	awsCmd.Stderr = os.Stderr
-
-	if err := awsCmd.Run(); err != nil {
-		return fmt.Errorf("aws sso login failed: %w", err)
-	}
-
-	util.SuccessColor.Fprintln(os.Stderr, "✔ SSO login successful.")
-	return nil
-}
 
 // --- Initialization ---
 func init() {

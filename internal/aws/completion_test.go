@@ -3,8 +3,6 @@ package aws
 import (
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
 func TestFuzzyMatch(t *testing.T) {
@@ -53,30 +51,6 @@ func TestFuzzyMatch(t *testing.T) {
 		result := FuzzyMatch(test.target, test.input)
 		if result != test.expected {
 			t.Errorf("FuzzyMatch(%q, %q) = %v, expected %v", test.target, test.input, result, test.expected)
-		}
-	}
-}
-
-func TestFuzzyMatchUnicode(t *testing.T) {
-	tests := []struct {
-		target   string
-		input    string
-		expected bool
-	}{
-		// Unicode characters
-		{"café-profile", "café", true},
-		{"测试-profile", "测试", true},
-		{"Ñoño-Profile", "ñoño", true},
-
-		// Mixed ASCII and Unicode
-		{"test-café", "tcafé", true},
-		{"test-café", "tc", true},
-	}
-
-	for _, test := range tests {
-		result := FuzzyMatchUnicode(test.target, test.input)
-		if result != test.expected {
-			t.Errorf("FuzzyMatchUnicode(%q, %q) = %v, expected %v", test.target, test.input, result, test.expected)
 		}
 	}
 }
@@ -182,27 +156,5 @@ func TestProfileCaching(t *testing.T) {
 	// Should still return same data (but fetched fresh)
 	if len(profiles1) != len(profiles3) {
 		t.Errorf("After invalidation returned different number of profiles: %d vs %d", len(profiles1), len(profiles3))
-	}
-}
-
-func TestCompleteProfilesFast(t *testing.T) {
-	// Test empty input
-	matches, directive := CompleteProfilesFast(nil, nil, "")
-	if directive != cobra.ShellCompDirectiveNoFileComp {
-		t.Errorf("Expected NoFileComp directive, got %v", directive)
-	}
-
-	// For empty input, should return all profiles (if any available)
-	if len(matches) == 0 {
-		t.Skip("No profiles available for testing")
-	}
-
-	// Test single character input
-	singleCharMatches, _ := CompleteProfilesFast(nil, nil, "b")
-
-	// Should have some matches for 'b' (assuming profiles starting with 'b' exist)
-	// This is a basic sanity check
-	if len(singleCharMatches) > len(matches) {
-		t.Errorf("Single char matches (%d) should not exceed total profiles (%d)", len(singleCharMatches), len(matches))
 	}
 }

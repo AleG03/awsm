@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -50,28 +49,6 @@ func FuzzyMatch(target, input string) bool {
 	}
 
 	return inputIndex == inputLen
-}
-
-func FuzzyMatchUnicode(target, input string) bool {
-	if input == "" {
-		return true
-	}
-
-	if len(input) > len(target) {
-		return false
-	}
-
-	targetRunes := []rune(strings.ToLower(target))
-	inputRunes := []rune(strings.ToLower(input))
-
-	inputIndex := 0
-	for i := 0; i < len(targetRunes) && inputIndex < len(inputRunes); i++ {
-		if targetRunes[i] == inputRunes[inputIndex] {
-			inputIndex++
-		}
-	}
-
-	return inputIndex == len(inputRunes)
 }
 
 // getCachedProfiles returns cached profiles or fetches them if cache is invalid
@@ -149,50 +126,4 @@ func CompleteProfilesFiltered(filter func(string) bool) func(*cobra.Command, []s
 
 		return matches, cobra.ShellCompDirectiveNoFileComp
 	}
-}
-
-// CompleteProfilesFast provides the fastest profile completion using different algorithms
-// based on input characteristics for optimal performance across different scenarios
-func CompleteProfilesFast(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	profiles, err := getCachedProfiles()
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	// Choose algorithm based on input characteristics
-	if toComplete == "" {
-		// Return all profiles for empty input (most common case)
-		return profiles, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	matches := make([]string, 0, len(profiles)/4)
-
-	if len(toComplete) == 1 {
-		// Single character: use simple prefix matching (faster for single chars)
-		char := toComplete[0]
-		if char >= 'A' && char <= 'Z' {
-			char += 32 // Convert to lowercase
-		}
-
-		for _, profile := range profiles {
-			if len(profile) > 0 {
-				firstChar := profile[0]
-				if firstChar >= 'A' && firstChar <= 'Z' {
-					firstChar += 32
-				}
-				if firstChar == char {
-					matches = append(matches, profile)
-				}
-			}
-		}
-	} else {
-		// Multi-character: use fuzzy matching
-		for _, profile := range profiles {
-			if FuzzyMatch(profile, toComplete) {
-				matches = append(matches, profile)
-			}
-		}
-	}
-
-	return matches, cobra.ShellCompDirectiveNoFileComp
 }

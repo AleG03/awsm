@@ -1,12 +1,7 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-
 	"awsm/internal/aws"
-	"awsm/internal/util"
 
 	"github.com/spf13/cobra"
 )
@@ -38,21 +33,7 @@ var ssoLoginCmd = &cobra.Command{
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeSSOSessions,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ssoSession := args[0]
-
-		util.InfoColor.Fprintf(os.Stderr, "Attempting SSO login for session: %s\n", util.BoldColor.Sprint(ssoSession))
-		util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
-
-		awsCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
-		awsCmd.Stdin = os.Stdin
-		awsCmd.Stdout = os.Stderr
-		awsCmd.Stderr = os.Stderr
-
-		if err := awsCmd.Run(); err != nil {
-			return fmt.Errorf("aws sso login failed: %w", err)
-		}
-		util.SuccessColor.Fprintln(os.Stderr, "\n✔ SSO login successful.")
-		return nil
+		return aws.PerformSSOLogin(args[0])
 	},
 }
 

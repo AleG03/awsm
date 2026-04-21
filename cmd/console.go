@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -60,8 +59,9 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 		}
 
 		// Check if profile needs MFA and prompt before any SDK call
+		// Skip if we have valid cached credentials
 		var mfaToken string
-		if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(currentProfile); mfaErr == nil && needsMFA {
+		if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(currentProfile); mfaErr == nil && needsMFA && !aws.HasValidCachedCredentials(currentProfile) {
 			prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(mfaSerial))
 			mfaToken, _ = util.PromptForInput(prompt)
 		}
@@ -81,13 +81,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 				}
 
 				// Trigger SSO login
-				util.InfoColor.Fprintf(os.Stderr, "Logging in to SSO session: %s\n", util.BoldColor.Sprint(ssoSession))
-				loginCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
-				loginCmd.Stdin = os.Stdin
-				loginCmd.Stdout = os.Stderr
-				loginCmd.Stderr = os.Stderr
-
-				if err := loginCmd.Run(); err != nil {
+				if err := aws.PerformSSOLogin(ssoSession); err != nil {
 					return fmt.Errorf("failed to refresh session: %w", err)
 				}
 

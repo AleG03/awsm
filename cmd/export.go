@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var includeSecrets bool
+
 var exportCmd = &cobra.Command{
 	Use:   "export [output-file]",
 	Short: "Export all profiles and SSO sessions to a file",
@@ -36,18 +38,25 @@ var exportCmd = &cobra.Command{
 			return fmt.Errorf("failed to list SSO sessions: %w", err)
 		}
 
-		// Read config file content
-		configPath, _ := aws.GetAWSConfigPath()
-		var configContent string
-		if data, err := os.ReadFile(configPath); err == nil {
-			configContent = string(data)
-		}
+		var configContent, credentialsContent string
+		if includeSecrets {
+			// Read config file content
+			configPath, _ := aws.GetAWSConfigPath()
+			if data, err := os.ReadFile(configPath); err == nil {
+				configContent = string(data)
+			}
 
-		// Read credentials file content
-		credentialsPath, _ := aws.GetAWSCredentialsPath()
-		var credentialsContent string
-		if data, err := os.ReadFile(credentialsPath); err == nil {
-			credentialsContent = string(data)
+			// Read credentials file content
+			credentialsPath, _ := aws.GetAWSCredentialsPath()
+			if data, err := os.ReadFile(credentialsPath); err == nil {
+				credentialsContent = string(data)
+			}
+		} else {
+			// Redact secrets from profiles
+			for i := range profiles {
+				profiles[i].AccessKey = ""
+				profiles[i].SecretKey = ""
+			}
 		}
 
 		exportData := ExportData{
@@ -79,5 +88,6 @@ var exportCmd = &cobra.Command{
 }
 
 func init() {
+	exportCmd.Flags().BoolVar(&includeSecrets, "include-secrets", false, "Include credentials and raw config files in the export")
 	rootCmd.AddCommand(exportCmd)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -51,21 +50,12 @@ func runSSOGenerate(ssoSession string) error {
 	outputFile := filepath.Join(home, ".aws", "config")
 
 	// 1. Log in to get a fresh token cached by the AWS CLI
-	util.InfoColor.Printf("Attempting SSO login for session: %s\n", util.BoldColor.Sprint(ssoSession))
-	awsCmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
-	awsCmd.Stdin = os.Stdin
-	awsCmd.Stdout = os.Stdout
-	awsCmd.Stderr = os.Stderr
-	if err := awsCmd.Run(); err != nil {
-		return fmt.Errorf("aws sso login failed: %w", err)
+	if err := aws.PerformSSOLogin(ssoSession); err != nil {
+		return err
 	}
-	util.SuccessColor.Println("\n✔ SSO login successful.")
 
 	// 2. Find the cached access token from the filesystem
 	util.InfoColor.Println("Finding cached SSO access token...")
-
-	// Give the AWS CLI a moment to write the token cache
-	time.Sleep(2 * time.Second)
 
 	accessToken, err := findLatestSsoToken(filepath.Join(home, ".aws", "sso", "cache"))
 	if err != nil {
@@ -81,12 +71,9 @@ func runSSOGenerate(ssoSession string) error {
 	}
 	ssoClient := sso.NewFromConfig(cfg)
 
-	// 4. List Accounts using the access token with retry logic
+	// 4. List Accounts using the access token
 	util.InfoColor.Println("Fetching all accessible accounts...")
 	var accounts []*sso.ListAccountsOutput
-
-	// Add a small delay to ensure token is properly cached
-	time.Sleep(1 * time.Second)
 
 	accountsPaginator := sso.NewListAccountsPaginator(ssoClient, &sso.ListAccountsInput{
 		AccessToken: &accessToken,
@@ -211,47 +198,19 @@ func runSSOGenerate(ssoSession string) error {
 }
 
 func getSSORegionForSession(ssoSession string) (string, error) {
-	home, err := os.UserHomeDir()
+	sessions, err := aws.ListSSOSessions()
 	if err != nil {
-		return "", fmt.Errorf("cannot find home directory: %w", err)
+		return "", fmt.Errorf("could not list SSO sessions: %w", err)
 	}
-
-	configPath := filepath.Join(home, ".aws", "config")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return "", fmt.Errorf("could not read AWS config file: %w", err)
+	for _, s := range sessions {
+		if s.Name == ssoSession {
+			if s.Region == "" {
+				return "", fmt.Errorf("sso_region not found in session '%s'", ssoSession)
+			}
+			return s.Region, nil
+		}
 	}
-
-	configContent := string(data)
-
-	// Look for the SSO session section
-	sessionPattern := fmt.Sprintf(`\[sso-session %s\]`, regexp.QuoteMeta(ssoSession))
-	sessionRegex := regexp.MustCompile(sessionPattern)
-	sessionMatch := sessionRegex.FindStringIndex(configContent)
-	if sessionMatch == nil {
-		return "", fmt.Errorf("SSO session '%s' not found in config", ssoSession)
-	}
-
-	// Find the region within this session section
-	sessionStart := sessionMatch[1]
-	nextSectionRegex := regexp.MustCompile(`\n\[`)
-	nextSectionMatch := nextSectionRegex.FindStringIndex(configContent[sessionStart:])
-
-	var sessionEnd int
-	if nextSectionMatch != nil {
-		sessionEnd = sessionStart + nextSectionMatch[0]
-	} else {
-		sessionEnd = len(configContent)
-	}
-
-	sessionSection := configContent[sessionStart:sessionEnd]
-	regionRegex := regexp.MustCompile(`(?m)^sso_region\s*=\s*(.+)$`)
-	regionMatch := regionRegex.FindStringSubmatch(sessionSection)
-	if regionMatch != nil {
-		return strings.TrimSpace(regionMatch[1]), nil
-	}
-
-	return "", fmt.Errorf("sso_region not found in session '%s'", ssoSession)
+	return "", fmt.Errorf("SSO session '%s' not found in config", ssoSession)
 }
 
 func findLatestSsoToken(cacheDir string) (string, error) {

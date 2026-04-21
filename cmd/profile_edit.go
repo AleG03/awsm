@@ -101,12 +101,8 @@ func editIAMProfile(profileName string, current *aws.ProfileInfo) error {
 		region = current.Region
 	}
 
-	// Delete old profile and create new one
-	if err := aws.DeleteProfile(profileName); err != nil {
-		return fmt.Errorf("failed to delete old profile: %w", err)
-	}
-
-	if err := aws.AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region); err != nil {
+	// Update profile in place
+	if err := aws.UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region); err != nil {
 		return fmt.Errorf("failed to update profile: %w", err)
 	}
 

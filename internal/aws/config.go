@@ -22,6 +22,30 @@ func GetAWSConfigPath() (string, error) {
 	return filepath.Join(home, ".aws", "config"), nil
 }
 
+// loadOrCreateIni loads an ini file or creates an empty one if it doesn't exist.
+func loadOrCreateIni(path string) (*ini.File, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return ini.Empty(), nil
+	}
+	cfg, err := ini.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// getProfileSection finds a profile section trying "profile <name>" first, then "<name>".
+func getProfileSection(cfg *ini.File, profileName string) (*ini.Section, error) {
+	section, err := cfg.GetSection("profile " + profileName)
+	if err != nil {
+		section, err = cfg.GetSection(profileName)
+		if err != nil {
+			return nil, fmt.Errorf("could not find profile section for '%s'", profileName)
+		}
+	}
+	return section, nil
+}
+
 // ListProfiles lists all profiles from both the AWS config and credentials files.
 func ListProfiles() ([]string, error) {
 	profilesMap := make(map[string]bool)
@@ -96,14 +120,9 @@ func getSsoSessionRecursive(profileName string, visited map[string]bool) (string
 		return "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
 
-	sectionName := "profile " + profileName
-	section, err := cfgFile.GetSection(sectionName)
+	section, err := getProfileSection(cfgFile, profileName)
 	if err != nil {
-		// Fallback for profiles without the "profile " prefix
-		section, err = cfgFile.GetSection(profileName)
-		if err != nil {
-			return "", fmt.Errorf("could not find profile section for '%s'", profileName)
-		}
+		return "", err
 	}
 
 	// 1. Check for sso_session directly
@@ -274,13 +293,9 @@ func GetProfileRegion(profileName string) (string, error) {
 		return "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
 
-	sectionName := "profile " + profileName
-	section, err := cfgFile.GetSection(sectionName)
+	section, err := getProfileSection(cfgFile, profileName)
 	if err != nil {
-		section, err = cfgFile.GetSection(profileName)
-		if err != nil {
-			return "", fmt.Errorf("could not find profile section for '%s'", profileName)
-		}
+		return "", err
 	}
 
 	region := section.Key("region").String()
@@ -304,15 +319,9 @@ func AddSSOSession(sessionName, startURL, region string) error {
 		return fmt.Errorf("failed to create AWS directory: %w", err)
 	}
 
-	// Load or create config file
-	var cfg *ini.File
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		cfg = ini.Empty()
-	} else {
-		cfg, err = ini.Load(configPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config file: %w", err)
-		}
+	cfg, err := loadOrCreateIni(configPath)
+	if err != nil {
+		return err
 	}
 
 	// Create SSO session section
@@ -342,15 +351,9 @@ func ChangeProfileRegion(profileName, region string) error {
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
 
-	// Try to find the profile section
-	sectionName := "profile " + profileName
-	section, err := cfg.GetSection(sectionName)
+	section, err := getProfileSection(cfg, profileName)
 	if err != nil {
-		// Fallback for profiles without the "profile " prefix
-		section, err = cfg.GetSection(profileName)
-		if err != nil {
-			return fmt.Errorf("could not find profile section for '%s'", profileName)
-		}
+		return err
 	}
 
 	// Update the region
@@ -415,14 +418,9 @@ func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 	}
 
 	// Load or create credentials file
-	var credCfg *ini.File
-	if _, err := os.Stat(credentialsPath); os.IsNotExist(err) {
-		credCfg = ini.Empty()
-	} else {
-		credCfg, err = ini.Load(credentialsPath)
-		if err != nil {
-			return fmt.Errorf("failed to load credentials file: %w", err)
-		}
+	credCfg, err := loadOrCreateIni(credentialsPath)
+	if err != nil {
+		return err
 	}
 
 	// Create profile section in credentials
@@ -445,14 +443,9 @@ func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 	}
 
 	// Load or create config file
-	var configCfg *ini.File
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		configCfg = ini.Empty()
-	} else {
-		configCfg, err = ini.Load(configPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config file: %w", err)
-		}
+	configCfg, err := loadOrCreateIni(configPath)
+	if err != nil {
+		return err
 	}
 
 	// Create profile section in config
@@ -486,15 +479,9 @@ func AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region st
 		return fmt.Errorf("failed to create AWS directory: %w", err)
 	}
 
-	// Load or create config file
-	var cfg *ini.File
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		cfg = ini.Empty()
-	} else {
-		cfg, err = ini.Load(configPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config file: %w", err)
-		}
+	cfg, err := loadOrCreateIni(configPath)
+	if err != nil {
+		return err
 	}
 
 	// Create profile section
@@ -513,6 +500,43 @@ func AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region st
 	}
 	if region != "" {
 		section.Key("region").SetValue(region)
+	}
+
+	return cfg.SaveTo(configPath)
+}
+
+// UpdateIAMRoleProfile updates an existing IAM role profile in place
+func UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region string) error {
+	configPath, err := GetAWSConfigPath()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := ini.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config file: %w", err)
+	}
+
+	section, err := getProfileSection(cfg, profileName)
+	if err != nil {
+		return err
+	}
+
+	section.Key("role_arn").SetValue(roleArn)
+	if sourceProfile != "" {
+		section.Key("source_profile").SetValue(sourceProfile)
+	} else {
+		section.DeleteKey("source_profile")
+	}
+	if mfaSerial != "" {
+		section.Key("mfa_serial").SetValue(mfaSerial)
+	} else {
+		section.DeleteKey("mfa_serial")
+	}
+	if region != "" {
+		section.Key("region").SetValue(region)
+	} else {
+		section.DeleteKey("region")
 	}
 
 	return cfg.SaveTo(configPath)
@@ -630,60 +654,6 @@ func UpdateProfileRegion(profileName, region string) error {
 	return cfg.SaveTo(configPath)
 }
 
-// OrphanedProfile represents a profile that should be cleaned up
-type OrphanedProfile struct {
-	Name   string
-	Reason string
-}
-
-// FindOrphanedProfiles finds profiles that reference non-existent resources
-func FindOrphanedProfiles() ([]OrphanedProfile, error) {
-	profiles, err := ListProfilesDetailed()
-	if err != nil {
-		return nil, err
-	}
-
-	ssoSessions, err := ListSSOSessions()
-	if err != nil {
-		return nil, err
-	}
-
-	// Create map of existing SSO sessions
-	ssoSessionMap := make(map[string]bool)
-	for _, session := range ssoSessions {
-		ssoSessionMap[session.Name] = true
-	}
-
-	var orphaned []OrphanedProfile
-	for _, profile := range profiles {
-		if profile.Type == ProfileTypeSSO {
-			if !ssoSessionMap[profile.SSOSession] {
-				orphaned = append(orphaned, OrphanedProfile{
-					Name:   profile.Name,
-					Reason: fmt.Sprintf("SSO session '%s' not found", profile.SSOSession),
-				})
-			}
-		} else if profile.Type == ProfileTypeIAM && profile.SourceProfile != "" {
-			// Check if source profile exists
-			sourceExists := false
-			for _, p := range profiles {
-				if p.Name == profile.SourceProfile {
-					sourceExists = true
-					break
-				}
-			}
-			if !sourceExists {
-				orphaned = append(orphaned, OrphanedProfile{
-					Name:   profile.Name,
-					Reason: fmt.Sprintf("source profile '%s' not found", profile.SourceProfile),
-				})
-			}
-		}
-	}
-
-	return orphaned, nil
-}
-
 // ImportSSOSession imports an SSO session
 func ImportSSOSession(session SSOSessionInfo) error {
 	return AddSSOSession(session.Name, session.StartURL, session.Region)
@@ -702,15 +672,9 @@ func AddSSOProfile(profileName, ssoSession, ssoAccountID, ssoRoleName, region st
 		return fmt.Errorf("failed to create AWS directory: %w", err)
 	}
 
-	// Load or create config file
-	var cfg *ini.File
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		cfg = ini.Empty()
-	} else {
-		cfg, err = ini.Load(configPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config file: %w", err)
-		}
+	cfg, err := loadOrCreateIni(configPath)
+	if err != nil {
+		return err
 	}
 
 	// Create profile section

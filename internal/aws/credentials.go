@@ -3,9 +3,11 @@ package aws
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,10 +26,61 @@ var ErrSsoSessionExpired = errors.New("sso session is expired or invalid")
 
 // TempCredentials holds a set of temporary AWS credentials.
 type TempCredentials struct {
-	AccessKeyId     string
-	SecretAccessKey string
-	SessionToken    string
-	Expires         time.Time
+	AccessKeyId     string    `json:"access_key_id"`
+	SecretAccessKey string    `json:"secret_access_key"`
+	SessionToken    string    `json:"session_token"`
+	Expires         time.Time `json:"expires"`
+}
+
+// credsCachePath returns the path for a profile's cached credentials.
+func credsCachePath(profileName string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".awsm", "cache", profileName+".json"), nil
+}
+
+// getCachedCreds reads cached credentials for a profile if they exist and are still valid.
+func getCachedCreds(profileName string) *TempCredentials {
+	path, err := credsCachePath(profileName)
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var creds TempCredentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil
+	}
+	// Require at least 60 seconds remaining
+	if time.Until(creds.Expires) < 60*time.Second {
+		return nil
+	}
+	return &creds
+}
+
+// setCachedCreds writes credentials to the cache.
+func setCachedCreds(profileName string, creds *TempCredentials) {
+	path, err := credsCachePath(profileName)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return
+	}
+	data, err := json.Marshal(creds)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0600)
+}
+
+// HasValidCachedCredentials checks if valid cached credentials exist for a profile.
+func HasValidCachedCredentials(profileName string) bool {
+	return getCachedCreds(profileName) != nil
 }
 
 // profileConfig holds the relevant configuration details extracted from a profile.
@@ -65,16 +118,22 @@ func GetCredentialsForProfile(profileName string, mfaToken ...string) (creds *Te
 
 	switch profileType {
 	case "iam":
+		// Check credential cache before prompting for MFA
+		if cached := getCachedCreds(profileName); cached != nil {
+			return cached, false, nil
+		}
 		tempCreds, err := handleIamProfile(profileName, pConfig, token)
 		if err != nil {
 			return nil, false, err
 		}
-		return &TempCredentials{
+		result := &TempCredentials{
 			AccessKeyId:     *tempCreds.AccessKeyId,
 			SecretAccessKey: *tempCreds.SecretAccessKey,
 			SessionToken:    *tempCreds.SessionToken,
 			Expires:         *tempCreds.Expiration,
-		}, false, nil
+		}
+		setCachedCreds(profileName, result)
+		return result, false, nil
 
 	case "sso", "credential-process":
 		awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(profileName))
@@ -127,30 +186,26 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 		return nil, "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
 
-	sectionName := "profile " + profileName
-	section, err := cfgFile.GetSection(sectionName)
+	section, err := getProfileSection(cfgFile, profileName)
 	if err != nil {
-		section, err = cfgFile.GetSection(profileName)
-		if err != nil {
-			// Profile not found in config, check credentials file for IAM user
-			credentialsPath, credErr := GetAWSCredentialsPath()
-			if credErr != nil {
-				return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
-			}
-			credFile, credErr := ini.Load(credentialsPath)
-			if credErr != nil {
-				return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
-			}
-			credSection, credErr := credFile.GetSection(profileName)
-			if credErr != nil {
-				return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
-			}
-			// Check if it has static credentials
-			if credSection.HasKey("aws_access_key_id") && credSection.HasKey("aws_secret_access_key") {
-				return &profileConfig{}, "iam-user", nil
-			}
+		// Profile not found in config, check credentials file for IAM user
+		credentialsPath, credErr := GetAWSCredentialsPath()
+		if credErr != nil {
 			return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
 		}
+		credFile, credErr := ini.Load(credentialsPath)
+		if credErr != nil {
+			return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
+		}
+		credSection, credErr := credFile.GetSection(profileName)
+		if credErr != nil {
+			return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
+		}
+		// Check if it has static credentials
+		if credSection.HasKey("aws_access_key_id") && credSection.HasKey("aws_secret_access_key") {
+			return &profileConfig{}, "iam-user", nil
+		}
+		return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
 	}
 
 	pConfig := &profileConfig{
@@ -185,18 +240,6 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	}
 
 	return nil, "unknown", fmt.Errorf("could not determine type of profile '%s'", profileName)
-}
-
-// IsChainedProfile checks if a profile is a chained role (references another source profile).
-func IsChainedProfile(profileName string) (bool, error) {
-	pConfig, pType, err := inspectProfile(profileName)
-	if err != nil {
-		return false, err
-	}
-	if pType == "iam" && pConfig.SourceProfile != "" && pConfig.RoleArn != "" {
-		return true, nil
-	}
-	return false, nil
 }
 
 // handleIamProfile contains the logic for IAM-based profiles (MFA/role assumption).
@@ -251,7 +294,7 @@ func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*t
 
 	input := &sts.AssumeRoleInput{
 		RoleArn:         aws.String(pConfig.RoleArn),
-		RoleSessionName: aws.String(fmt.Sprintf("awsm-session-%d", time.Now().Unix())),
+		RoleSessionName: aws.String("awsm-session"),
 		DurationSeconds: aws.Int32(3600),
 	}
 
@@ -327,14 +370,9 @@ func UpdateCredentialsFile(creds *TempCredentials, region, profileName string) e
 	}
 
 	// Load or create credentials file
-	var cfg *ini.File
-	if _, err := os.Stat(credentialsPath); os.IsNotExist(err) {
-		cfg = ini.Empty()
-	} else {
-		cfg, err = ini.Load(credentialsPath)
-		if err != nil {
-			return fmt.Errorf("failed to load credentials file: %w", err)
-		}
+	cfg, err := loadOrCreateIni(credentialsPath)
+	if err != nil {
+		return err
 	}
 
 	// Get or create default section
@@ -431,12 +469,7 @@ func UpdateStaticProfile(profileName string) error {
 	var region string
 	cfgFile, err := ini.Load(configPath)
 	if err == nil {
-		sectionName := "profile " + profileName
-		configSection, err := cfgFile.GetSection(sectionName)
-		if err != nil {
-			configSection, err = cfgFile.GetSection(profileName)
-		}
-		if err == nil {
+		if configSection, err := getProfileSection(cfgFile, profileName); err == nil {
 			region = configSection.Key("region").String()
 		}
 	}
@@ -516,15 +549,9 @@ func SetRegion(region string) error {
 		return fmt.Errorf("failed to create AWS directory: %w", err)
 	}
 
-	// Load or create credentials file
-	var cfg *ini.File
-	if _, err := os.Stat(credentialsPath); os.IsNotExist(err) {
-		cfg = ini.Empty()
-	} else {
-		cfg, err = ini.Load(credentialsPath)
-		if err != nil {
-			return fmt.Errorf("failed to load credentials file: %w", err)
-		}
+	cfg, err := loadOrCreateIni(credentialsPath)
+	if err != nil {
+		return err
 	}
 
 	// Get or create default section
@@ -583,4 +610,21 @@ func checkSSOLoginNeeded(profileName string) (bool, error) {
 		return true, nil
 	}
 	return false, err
+}
+
+// PerformSSOLogin runs `aws sso login` for the given SSO session.
+func PerformSSOLogin(ssoSession string) error {
+	util.InfoColor.Fprintf(os.Stderr, "SSO session expired. Attempting login for session: %s\n", util.BoldColor.Sprint(ssoSession))
+	util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
+
+	cmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("aws sso login failed: %w", err)
+	}
+	util.SuccessColor.Fprintln(os.Stderr, "✔ SSO login successful.")
+	return nil
 }
