@@ -37,17 +37,35 @@ type profileConfig struct {
 	SourceProfile string
 }
 
+// ProfileNeedsMFA checks if a profile requires MFA and returns the MFA serial.
+func ProfileNeedsMFA(profileName string) (bool, string, error) {
+	pConfig, profileType, err := inspectProfile(profileName)
+	if err != nil {
+		return false, "", err
+	}
+	if profileType == "iam" && pConfig.MfaSerial != "" {
+		return true, pConfig.MfaSerial, nil
+	}
+	return false, "", nil
+}
+
 // GetCredentialsForProfile is the main entry point for getting credentials.
 // It inspects the profile and dispatches to the correct handler.
-func GetCredentialsForProfile(profileName string) (creds *TempCredentials, isStatic bool, err error) {
+// If mfaToken is non-empty, it will be used instead of prompting interactively.
+func GetCredentialsForProfile(profileName string, mfaToken ...string) (creds *TempCredentials, isStatic bool, err error) {
 	pConfig, profileType, err := inspectProfile(profileName)
 	if err != nil {
 		return nil, false, err
 	}
 
+	token := ""
+	if len(mfaToken) > 0 {
+		token = mfaToken[0]
+	}
+
 	switch profileType {
 	case "iam":
-		tempCreds, err := handleIamProfile(profileName, pConfig)
+		tempCreds, err := handleIamProfile(profileName, pConfig, token)
 		if err != nil {
 			return nil, false, err
 		}
@@ -182,16 +200,15 @@ func IsChainedProfile(profileName string) (bool, error) {
 }
 
 // handleIamProfile contains the logic for IAM-based profiles (MFA/role assumption).
-
-func handleIamProfile(profileName string, pConfig *profileConfig) (*types.Credentials, error) {
+func handleIamProfile(profileName string, pConfig *profileConfig, mfaToken string) (*types.Credentials, error) {
 	if pConfig.RoleArn != "" {
-		return assumeRole(profileName, pConfig)
+		return assumeRole(profileName, pConfig, mfaToken)
 	}
-	return getSessionToken(profileName, pConfig)
+	return getSessionToken(profileName, pConfig, mfaToken)
 }
 
 // assumeRole handles the specific logic for calling sts:AssumeRole.
-func assumeRole(profileName string, pConfig *profileConfig) (*types.Credentials, error) {
+func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*types.Credentials, error) {
 	util.InfoColor.Fprintf(os.Stderr, "Assuming role %s...\n", util.BoldColor.Sprint(pConfig.RoleArn))
 
 	stsClientProfile := profileName
@@ -220,10 +237,14 @@ func assumeRole(profileName string, pConfig *profileConfig) (*types.Credentials,
 
 	var tokenCode *string
 	if pConfig.MfaSerial != "" {
-		prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
-		code, err := util.PromptForInput(prompt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read MFA token: %w", err)
+		code := mfaToken
+		if code == "" {
+			prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
+			var err error
+			code, err = util.PromptForInput(prompt)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read MFA token: %w", err)
+			}
 		}
 		tokenCode = aws.String(code)
 	}
@@ -248,7 +269,7 @@ func assumeRole(profileName string, pConfig *profileConfig) (*types.Credentials,
 }
 
 // getSessionToken handles the specific logic for calling sts:GetSessionToken.
-func getSessionToken(profileName string, pConfig *profileConfig) (*types.Credentials, error) {
+func getSessionToken(profileName string, pConfig *profileConfig, mfaToken string) (*types.Credentials, error) {
 	util.InfoColor.Fprintf(os.Stderr, "Getting session token for profile %s...\n", util.BoldColor.Sprint(profileName))
 
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(profileName))
@@ -256,10 +277,13 @@ func getSessionToken(profileName string, pConfig *profileConfig) (*types.Credent
 		return nil, fmt.Errorf("failed to load AWS config for profile '%s': %w", profileName, err)
 	}
 
-	prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
-	code, err := util.PromptForInput(prompt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read MFA token: %w", err)
+	code := mfaToken
+	if code == "" {
+		prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
+		code, err = util.PromptForInput(prompt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read MFA token: %w", err)
+		}
 	}
 
 	input := &sts.GetSessionTokenInput{

@@ -49,12 +49,23 @@ func runProfileSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid region for profile '%s': %s", profileName, region)
 	}
 
+	// Check if profile needs MFA and prompt before starting the spinner
+	// (the spinner captures stdin, preventing interactive input)
+	var mfaToken string
+	if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(profileName); mfaErr == nil && needsMFA {
+		prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(mfaSerial))
+		mfaToken, err = util.PromptForInput(prompt)
+		if err != nil {
+			return fmt.Errorf("failed to read MFA token: %w", err)
+		}
+	}
+
 	// Use spinner for credential acquisition
 	var creds *aws.TempCredentials
 	var isStatic bool
 	err = tui.ShowSpinner(context.Background(), fmt.Sprintf("Getting credentials for profile '%s'", profileName), func() error {
 		var spinnerErr error
-		creds, isStatic, spinnerErr = aws.GetCredentialsForProfile(profileName)
+		creds, isStatic, spinnerErr = aws.GetCredentialsForProfile(profileName, mfaToken)
 		return spinnerErr
 	})
 
