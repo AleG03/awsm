@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -69,11 +72,13 @@ var updateCmd = &cobra.Command{
 			assetName += ".tar.gz"
 		}
 
-		var downloadURL string
+		var downloadURL, checksumsURL string
 		for _, asset := range release.Assets {
 			if asset.Name == assetName {
 				downloadURL = asset.BrowserDownloadURL
-				break
+			}
+			if asset.Name == "checksums.txt" {
+				checksumsURL = asset.BrowserDownloadURL
 			}
 		}
 
@@ -97,12 +102,25 @@ var updateCmd = &cobra.Command{
 		}
 		defer os.Remove(tmpFile.Name())
 
-		// Write downloaded content
-		_, err = io.Copy(tmpFile, resp.Body)
+		// Write downloaded content while hashing it
+		hasher := sha256.New()
+		_, err = io.Copy(io.MultiWriter(tmpFile, hasher), resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to write update: %w", err)
 		}
 		tmpFile.Close()
+
+		if checksumsURL == "" {
+			return fmt.Errorf("release is missing checksums.txt, refusing to install unverified binary")
+		}
+		expectedSum, err := fetchExpectedChecksum(checksumsURL, assetName)
+		if err != nil {
+			return fmt.Errorf("failed to verify checksum: %w", err)
+		}
+		if actualSum := hex.EncodeToString(hasher.Sum(nil)); actualSum != expectedSum {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", assetName, expectedSum, actualSum)
+		}
+		tui.PrintSuccess("Checksum verified.")
 
 		// Extract and install
 		if err := installUpdate(tmpFile.Name(), runtime.GOOS); err != nil {
@@ -115,6 +133,27 @@ var updateCmd = &cobra.Command{
 	},
 }
 
+func fetchExpectedChecksum(checksumsURL, assetName string) (string, error) {
+	resp, err := http.Get(checksumsURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download checksums.txt: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read checksums.txt: %w", err)
+	}
+
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == assetName {
+			return fields[0], nil
+		}
+	}
+	return "", fmt.Errorf("no checksum entry found for %s", assetName)
+}
+
 func installUpdate(archivePath, goos string) error {
 	// Get current executable path
 	currentExe, err := os.Executable()
@@ -122,37 +161,64 @@ func installUpdate(archivePath, goos string) error {
 		return fmt.Errorf("failed to get current executable path: %w", err)
 	}
 
-	// Extract archive
-	var cmd *exec.Cmd
 	if goos == "windows" {
 		// For Windows, we'd need to handle zip extraction
 		return fmt.Errorf("Windows auto-update not yet supported. Please download manually from GitHub")
-	} else {
-		// Extract tar.gz
-		cmd = exec.Command("tar", "-xzf", archivePath, "-C", "/tmp")
 	}
 
-	if err := cmd.Run(); err != nil {
+	// Extract into a private temp dir (avoids a predictable shared path)
+	extractDir, err := os.MkdirTemp("", "awsm-extract-*")
+	if err != nil {
+		return fmt.Errorf("failed to create extraction dir: %w", err)
+	}
+	defer os.RemoveAll(extractDir)
+
+	if err := exec.Command("tar", "-xzf", archivePath, "-C", extractDir).Run(); err != nil {
 		return fmt.Errorf("failed to extract archive: %w", err)
 	}
 
-	// Find extracted binary
-	extractedBinary := "/tmp/awsm"
-	if goos == "windows" {
-		extractedBinary = "/tmp/awsm.exe"
-	}
+	extractedBinary := filepath.Join(extractDir, "awsm")
 
-	// Replace current binary
-	if err := os.Rename(extractedBinary, currentExe); err != nil {
-		return fmt.Errorf("failed to replace binary: %w", err)
-	}
-
-	// Make executable
-	if err := os.Chmod(currentExe, 0755); err != nil {
+	if err := os.Chmod(extractedBinary, 0755); err != nil {
 		return fmt.Errorf("failed to make binary executable: %w", err)
 	}
 
+	// Replace current binary. os.Rename fails with EXDEV when the temp dir
+	// and install path are on different filesystems, so fall back to a copy.
+	if err := os.Rename(extractedBinary, currentExe); err != nil {
+		if err := copyFile(extractedBinary, currentExe); err != nil {
+			return fmt.Errorf("failed to replace binary: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.CreateTemp(filepath.Dir(dst), ".awsm-update-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(out.Name())
+
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Chmod(0755); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(out.Name(), dst)
 }
 
 func init() {

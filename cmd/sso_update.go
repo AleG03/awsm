@@ -130,12 +130,14 @@ func runSSOUpdate(ssoSession string) error {
 					continue
 				}
 				for _, role := range rolesPage.RoleList {
+					cleanSessionName := strings.ToLower(ssoSession)
+					cleanSessionName = cleaner.ReplaceAllString(cleanSessionName, "-")
 					cleanAccountName := strings.ToLower(*acc.AccountName)
 					cleanAccountName = cleaner.ReplaceAllString(cleanAccountName, "-")
 					cleanRoleName := strings.ToLower(*role.RoleName)
 					cleanRoleName = cleaner.ReplaceAllString(cleanRoleName, "-")
 
-					profileName := fmt.Sprintf("%s-%s", cleanAccountName, cleanRoleName)
+					profileName := fmt.Sprintf("%s-%s-%s", cleanSessionName, cleanAccountName, cleanRoleName)
 
 					newProfileContent := fmt.Sprintf("[profile %s]\nsso_session = %s\nsso_account_id = %s\nsso_role_name = %s\nregion = %s\n\n",
 						profileName, ssoSession, *acc.AccountId, *role.RoleName, awsRegion)
