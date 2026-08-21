@@ -28,11 +28,15 @@ func ExtractProfileConfig(profileContent string) string {
 func RemoveAllProfilesForSession(configContent, sessionName string) (string, []string) {
 	_, profileContentMap := ParseExistingProfiles(configContent)
 
+	// go-ini's pretty-printer (run by OrganizeConfigFile) pads keys with
+	// variable amounts of whitespace before "=", so match on that instead
+	// of a fixed single-space/no-space string.
+	sessionRegex := regexp.MustCompile(fmt.Sprintf(`(?m)^\s*sso_session\s*=\s*%s\s*$`, regexp.QuoteMeta(sessionName)))
+
 	var removed []string
 	for profileName, content := range profileContentMap {
 		// Check if this profile references the session
-		if strings.Contains(content, fmt.Sprintf("sso_session = %s", sessionName)) ||
-			strings.Contains(content, fmt.Sprintf("sso_session=%s", sessionName)) {
+		if sessionRegex.MatchString(content) {
 			configContent = RemoveProfileFromConfig(configContent, profileName)
 			removed = append(removed, profileName)
 		}
