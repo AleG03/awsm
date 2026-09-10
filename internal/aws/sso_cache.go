@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	ini "gopkg.in/ini.v1"
+	"awsm/internal/awsini"
 )
 
 // ssoTokenCacheEntry mirrors the relevant fields of the JSON files written by
@@ -77,7 +77,7 @@ func lookupSSOStartURL(profileName string) string {
 	if err != nil {
 		return ""
 	}
-	cfg, err := ini.Load(cfgPath)
+	cfg, err := awsini.Load(cfgPath)
 	if err != nil {
 		return ""
 	}

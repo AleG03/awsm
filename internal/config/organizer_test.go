@@ -8,6 +8,10 @@ import (
 )
 
 func TestOrganizeConfigFile(t *testing.T) {
+	// Writing the config takes a backup under $HOME; keep it out of the
+	// developer's real ~/.awsm.
+	t.Setenv("HOME", t.TempDir())
+
 	// Create a messy config file that simulates real-world disorder
 	messyConfig := `[profile dev-admin]
 sso_session = company
@@ -179,6 +183,10 @@ func TestOrganizeConfigFile_NonExistent(t *testing.T) {
 }
 
 func TestOrganizeConfigFile_WithDefault(t *testing.T) {
+	// Writing the config takes a backup under $HOME; keep it out of the
+	// developer's real ~/.awsm.
+	t.Setenv("HOME", t.TempDir())
+
 	configContent := `[default]
 region = us-east-1
 output = json

@@ -110,9 +110,8 @@ func runSSOUpdate(ssoSession string) error {
 	}
 
 	// Build new profiles from discovered accounts/roles
-	var newProfilesBuilder strings.Builder
 	cleaner := regexp.MustCompile(`[^a-zA-Z0-9-]`)
-	profileCount := 0
+	var generated []awsmConfig.GeneratedProfile
 
 	tui.PrintStep("Generating profiles...")
 	for _, page := range accounts {
@@ -137,17 +136,36 @@ func runSSOUpdate(ssoSession string) error {
 					cleanRoleName := strings.ToLower(*role.RoleName)
 					cleanRoleName = cleaner.ReplaceAllString(cleanRoleName, "-")
 
-					profileName := fmt.Sprintf("%s-%s-%s", cleanSessionName, cleanAccountName, cleanRoleName)
-
-					newProfileContent := fmt.Sprintf("[profile %s]\nsso_session = %s\nsso_account_id = %s\nsso_role_name = %s\nregion = %s\n\n",
-						profileName, ssoSession, *acc.AccountId, *role.RoleName, awsRegion)
-
-					newProfilesBuilder.WriteString(newProfileContent)
-					profileCount++
+					generated = append(generated, awsmConfig.GeneratedProfile{
+						Name:       fmt.Sprintf("%s-%s-%s", cleanSessionName, cleanAccountName, cleanRoleName),
+						SSOSession: ssoSession,
+						AccountID:  *acc.AccountId,
+						RoleName:   *role.RoleName,
+						Region:     awsRegion,
+					})
 				}
 			}
 		}
 	}
+
+	// Two accounts whose names differ only by punctuation produce the same
+	// profile name; left alone that either breaks the config file or silently
+	// drops one of the accounts.
+	generated, renames := awsmConfig.ResolveProfileNameCollisions(generated)
+	if len(renames) > 0 {
+		tui.PrintWarning(fmt.Sprintf("%d profile names collided and were disambiguated:", len(renames)))
+		for _, r := range renames {
+			tui.PrintMuted("  " + r)
+		}
+	}
+
+	var newProfilesBuilder strings.Builder
+	for _, g := range generated {
+		newProfilesBuilder.WriteString(fmt.Sprintf(
+			"[profile %s]\nsso_session = %s\nsso_account_id = %s\nsso_role_name = %s\nregion = %s\n\n",
+			g.Name, g.SSOSession, g.AccountID, g.RoleName, g.Region))
+	}
+	profileCount := len(generated)
 
 	// Write the updated config
 	finalConfig := existingConfig

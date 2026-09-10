@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"awsm/internal/awsini"
+
 	"gopkg.in/ini.v1"
 )
 
@@ -22,16 +24,11 @@ func GetAWSConfigPath() (string, error) {
 	return filepath.Join(home, ".aws", "config"), nil
 }
 
-// loadOrCreateIni loads an ini file or creates an empty one if it doesn't exist.
+// loadOrCreateIni loads an AWS ini file or creates an empty one if it doesn't
+// exist. Always goes through awsini so nested sub-sections and "#"/";" inside
+// values survive the round trip; see the awsini package comment.
 func loadOrCreateIni(path string) (*ini.File, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return ini.Empty(), nil
-	}
-	cfg, err := ini.Load(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load %s: %w", path, err)
-	}
-	return cfg, nil
+	return awsini.LoadOrEmpty(path)
 }
 
 // getProfileSection finds a profile section trying "profile <name>" first, then "<name>".
@@ -53,7 +50,7 @@ func ListProfiles() ([]string, error) {
 	// Load config file
 	configPath, err := GetAWSConfigPath()
 	if err == nil {
-		if cfg, err := ini.Load(configPath); err == nil {
+		if cfg, err := awsini.Load(configPath); err == nil {
 			for _, section := range cfg.Sections() {
 				name := section.Name()
 				if name == "DEFAULT" || strings.HasPrefix(name, "sso-session ") {
@@ -67,7 +64,7 @@ func ListProfiles() ([]string, error) {
 	// Load credentials file
 	credentialsPath, err := GetAWSCredentialsPath()
 	if err == nil {
-		if cfg, err := ini.Load(credentialsPath); err == nil {
+		if cfg, err := awsini.Load(credentialsPath); err == nil {
 			for _, section := range cfg.Sections() {
 				name := section.Name()
 				if name == "DEFAULT" {
@@ -115,7 +112,7 @@ func getSsoSessionRecursive(profileName string, visited map[string]bool) (string
 	if err != nil {
 		return "", err
 	}
-	cfgFile, err := ini.Load(configPath)
+	cfgFile, err := awsini.Load(configPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
@@ -194,7 +191,7 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 		return nil, err
 	}
 
-	cfg, err := ini.Load(configPath)
+	cfg, err := awsini.Load(configPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to read AWS config file at %s: %w", configPath, err)
 	}
@@ -204,7 +201,7 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 		return nil, err
 	}
 
-	credCfg, err := ini.Load(credentialsPath)
+	credCfg, err := awsini.Load(credentialsPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to read AWS credentials file at %s: %w", credentialsPath, err)
 	}
@@ -288,7 +285,7 @@ func GetProfileRegion(profileName string) (string, error) {
 		return "", err
 	}
 
-	cfgFile, err := ini.Load(configPath)
+	cfgFile, err := awsini.Load(configPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
@@ -336,7 +333,7 @@ func AddSSOSession(sessionName, startURL, region string) error {
 	section.Key("sso_region").SetValue(region)
 	section.Key("sso_registration_scopes").SetValue("sso:account:access")
 
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // ChangeProfileRegion changes the region for a specific profile
@@ -346,7 +343,7 @@ func ChangeProfileRegion(profileName, region string) error {
 		return err
 	}
 
-	cfg, err := ini.Load(configPath)
+	cfg, err := awsini.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
@@ -359,7 +356,7 @@ func ChangeProfileRegion(profileName, region string) error {
 	// Update the region
 	section.Key("region").SetValue(region)
 
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // SSOSessionInfo contains information about an SSO session
@@ -377,7 +374,7 @@ func ListSSOSessions() ([]SSOSessionInfo, error) {
 		return nil, err
 	}
 
-	cfg, err := ini.Load(configPath)
+	cfg, err := awsini.Load(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []SSOSessionInfo{}, nil
@@ -457,7 +454,7 @@ func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 
 	configSection.Key("region").SetValue(region)
 
-	if err := configCfg.SaveTo(configPath); err != nil {
+	if err := awsini.Save(configCfg, configPath); err != nil {
 		return fmt.Errorf("failed to save config file: %w", err)
 	}
 
@@ -502,7 +499,7 @@ func AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region st
 		section.Key("region").SetValue(region)
 	}
 
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // UpdateIAMRoleProfile updates an existing IAM role profile in place
@@ -512,7 +509,7 @@ func UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region
 		return err
 	}
 
-	cfg, err := ini.Load(configPath)
+	cfg, err := awsini.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
@@ -539,7 +536,7 @@ func UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region
 		section.DeleteKey("region")
 	}
 
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // DeleteProfile removes a profile from both config and credentials files
@@ -551,7 +548,7 @@ func DeleteProfile(profileName string) error {
 	}
 
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-		cfg, err := ini.Load(configPath)
+		cfg, err := awsini.Load(configPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config file: %w", err)
 		}
@@ -565,7 +562,7 @@ func DeleteProfile(profileName string) error {
 			}
 		}
 
-		if err := cfg.SaveTo(configPath); err != nil {
+		if err := awsini.Save(cfg, configPath); err != nil {
 			return fmt.Errorf("failed to save config file: %w", err)
 		}
 	}
@@ -577,7 +574,7 @@ func DeleteProfile(profileName string) error {
 	}
 
 	if _, err := os.Stat(credentialsPath); !os.IsNotExist(err) {
-		cfg, err := ini.Load(credentialsPath)
+		cfg, err := awsini.Load(credentialsPath)
 		if err != nil {
 			return fmt.Errorf("failed to load credentials file: %w", err)
 		}
@@ -602,7 +599,7 @@ func DeleteSSOSession(sessionName string) error {
 		return err
 	}
 
-	cfg, err := ini.Load(configPath)
+	cfg, err := awsini.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
@@ -612,7 +609,7 @@ func DeleteSSOSession(sessionName string) error {
 		cfg.DeleteSection(sectionName)
 	}
 
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // GetProfilesBySSO returns all profiles that use a specific SSO session
@@ -639,7 +636,7 @@ func UpdateProfileRegion(profileName, region string) error {
 		return err
 	}
 
-	cfg, err := ini.Load(configPath)
+	cfg, err := awsini.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config file: %w", err)
 	}
@@ -651,7 +648,7 @@ func UpdateProfileRegion(profileName, region string) error {
 	}
 
 	section.Key("region").SetValue(region)
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // ImportSSOSession imports an SSO session
@@ -691,7 +688,7 @@ func AddSSOProfile(profileName, ssoSession, ssoAccountID, ssoRoleName, region st
 		section.Key("region").SetValue(region)
 	}
 
-	return cfg.SaveTo(configPath)
+	return awsini.Save(cfg, configPath)
 }
 
 // ImportProfile imports a profile based on its type
@@ -723,7 +720,7 @@ func saveCredentialsWithDefaultLast(cfg *ini.File, credentialsPath string) error
 	}
 
 	// Save file without default
-	if err := cfg.SaveTo(credentialsPath); err != nil {
+	if err := awsini.Save(cfg, credentialsPath); err != nil {
 		return err
 	}
 
@@ -741,7 +738,7 @@ func saveCredentialsWithDefaultLast(cfg *ini.File, credentialsPath string) error
 		if currentSourceProfile != "" && !newDefault.HasKey("# source_profile") {
 			newDefault.Key("# source_profile").SetValue(currentSourceProfile)
 		}
-		return cfg.SaveTo(credentialsPath)
+		return awsini.Save(cfg, credentialsPath)
 	}
 
 	return nil
@@ -781,12 +778,12 @@ func RestoreConfigFiles(configContent, credentialsContent string) error {
 
 	// 4. Write new content
 	if configContent != "" {
-		if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		if err := awsini.WriteFile(configPath, []byte(configContent)); err != nil {
 			return fmt.Errorf("failed to write config file: %w", err)
 		}
 	}
 	if credentialsContent != "" {
-		if err := os.WriteFile(credentialsPath, []byte(credentialsContent), 0600); err != nil {
+		if err := awsini.WriteFile(credentialsPath, []byte(credentialsContent)); err != nil {
 			return fmt.Errorf("failed to write credentials file: %w", err)
 		}
 	}

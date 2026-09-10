@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"awsm/internal/aws"
+	"awsm/internal/awsini"
 	"awsm/internal/tui"
 
 	"github.com/charmbracelet/lipgloss"
@@ -230,6 +231,18 @@ func checkProfilesAndCache() []checkResult {
 			out = append(out, checkResult{Category: "Profiles", Name: "cache", Status: statusOK, Message: fmt.Sprintf("%d cached credential(s) at %s", len(files), cachePath)})
 		} else {
 			out = append(out, checkResult{Category: "Profiles", Name: "cache", Status: statusInfo, Message: "no cache directory yet"})
+		}
+	}
+
+	// Every awsm write to ~/.aws/config or ~/.aws/credentials leaves a
+	// timestamped copy here, which is worth surfacing: it is the way back if a
+	// sync produced something unexpected.
+	if backupDir, dirErr := awsini.BackupDir(); dirErr == nil {
+		if info, statErr := os.Stat(backupDir); statErr == nil && info.IsDir() {
+			files, _ := os.ReadDir(backupDir)
+			out = append(out, checkResult{Category: "Profiles", Name: "backups", Status: statusOK, Message: fmt.Sprintf("%d backup(s) of your AWS files at %s", len(files), backupDir)})
+		} else {
+			out = append(out, checkResult{Category: "Profiles", Name: "backups", Status: statusInfo, Message: "no backups yet; awsm creates one before it writes your AWS files"})
 		}
 	}
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"awsm/internal/awsini"
 )
 
 // ExtractProfileConfig extracts just the configuration lines from a profile section
@@ -45,7 +47,15 @@ func RemoveAllProfilesForSession(configContent, sessionName string) (string, []s
 	return configContent, removed
 }
 
-// RemoveProfileFromConfig removes a specific profile from the config content
+// sectionHeaderRegex matches any ini section header.
+//
+// A profile ends at the next header of *any* kind. Scanning only for the next
+// "[profile ...]" header used to make removal swallow every section in
+// between - "[sso-session ...]", "[default]", "[services ...]" - or the whole
+// rest of the file when the removed profile was the last one.
+var sectionHeaderRegex = regexp.MustCompile(`(?m)^\[[^\]]*\]`)
+
+// RemoveProfileFromConfig removes a specific profile from the config content.
 func RemoveProfileFromConfig(config, profileName string) string {
 	profileHeaderRegex := regexp.MustCompile(fmt.Sprintf(`(?m)^\[profile %s\]`, regexp.QuoteMeta(profileName)))
 	match := profileHeaderRegex.FindStringIndex(config)
@@ -53,22 +63,45 @@ func RemoveProfileFromConfig(config, profileName string) string {
 		return config
 	}
 
-	// Find the start of the profile
-	profileStart := match[0]
+	// A comment block sitting directly above the header documents this
+	// profile, so it goes away with it.
+	profileStart := introStart(config, match[0])
 
-	// Find the end of the profile (next profile or end of file)
-	nextProfileRegex := regexp.MustCompile(`(?m)^\[profile [^\]]+\]`)
-	nextMatches := nextProfileRegex.FindAllStringIndex(config[match[1]:], -1)
-
-	var profileEnd int
-	if len(nextMatches) > 0 {
-		profileEnd = match[1] + nextMatches[0][0]
-	} else {
-		profileEnd = len(config)
+	// The profile ends at the next section header; the comment block
+	// introducing that header belongs to it and has to survive.
+	profileEnd := len(config)
+	if next := sectionHeaderRegex.FindStringIndex(config[match[1]:]); next != nil {
+		profileEnd = introStart(config, match[1]+next[0])
 	}
 
-	// Remove the profile section
 	return config[:profileStart] + config[profileEnd:]
+}
+
+// introStart returns the offset at which the comment block introducing the
+// section header at headerPos begins, or headerPos itself when the header is
+// not preceded by one. Blank lines mixed into the block are included so the
+// separating newline stays with the block.
+func introStart(config string, headerPos int) int {
+	start := headerPos
+	sawComment := false
+	for start > 0 {
+		lineStart := 0
+		if i := strings.LastIndexByte(config[:start-1], '\n'); i >= 0 {
+			lineStart = i + 1
+		}
+		line := strings.TrimSpace(config[lineStart : start-1])
+		if line != "" && !strings.HasPrefix(line, "#") && !strings.HasPrefix(line, ";") {
+			break
+		}
+		if line != "" {
+			sawComment = true
+		}
+		start = lineStart
+	}
+	if !sawComment {
+		return headerPos
+	}
+	return start
 }
 
 // ExtractProfileNamesFromContent extracts profile names from generated profile content
@@ -99,15 +132,16 @@ func ParseExistingProfiles(configContent string) (map[string]bool, map[string]st
 			profileName := match[1]
 			profileStart := strings.Index(configContent, match[0])
 			if profileStart != -1 {
-				// Find the end of this profile (next profile or end of file)
-				nextProfileStart := len(configContent)
-				for _, nextMatch := range profileHeaderRegex.FindAllStringSubmatch(configContent[profileStart+len(match[0]):], -1) {
-					if len(nextMatch) > 1 {
-						nextProfileStart = profileStart + len(match[0]) + strings.Index(configContent[profileStart+len(match[0]):], nextMatch[0])
-						break
-					}
+				// Find the end of this profile: the next section header of
+				// any kind, or the end of the file. Stopping only at the next
+				// "[profile ...]" header made a profile's content absorb the
+				// sections that followed it.
+				bodyStart := profileStart + len(match[0])
+				profileEnd := len(configContent)
+				if next := sectionHeaderRegex.FindStringIndex(configContent[bodyStart:]); next != nil {
+					profileEnd = bodyStart + next[0]
 				}
-				existingProfileContent[profileName] = configContent[profileStart:nextProfileStart]
+				existingProfileContent[profileName] = configContent[profileStart:profileEnd]
 			}
 		}
 	}
@@ -128,5 +162,5 @@ func ReadConfigFile(path string) (string, error) {
 
 // WriteConfigFile writes the content to the file at the given path
 func WriteConfigFile(path, content string) error {
-	return os.WriteFile(path, []byte(content), 0600)
+	return awsini.WriteFile(path, []byte(content))
 }

@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"awsm/internal/awsini"
 	"awsm/internal/util"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/aws-sdk-go-v2/service/sts/types"
-	ini "gopkg.in/ini.v1"
 )
 
 // ErrSsoSessionExpired indicates SSO session has expired
@@ -207,7 +207,7 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	cfgFile, err := ini.Load(configPath)
+	cfgFile, err := awsini.Load(configPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
@@ -219,7 +219,7 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 		if credErr != nil {
 			return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
 		}
-		credFile, credErr := ini.Load(credentialsPath)
+		credFile, credErr := awsini.Load(credentialsPath)
 		if credErr != nil {
 			return nil, "", fmt.Errorf("could not find profile section for '%s'", profileName)
 		}
@@ -256,7 +256,7 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	// Profile found in config but no special keys, check credentials file for static keys
 	credentialsPath, credErr := GetAWSCredentialsPath()
 	if credErr == nil {
-		credFile, credErr := ini.Load(credentialsPath)
+		credFile, credErr := awsini.Load(credentialsPath)
 		if credErr == nil {
 			credSection, credErr := credFile.GetSection(profileName)
 			if credErr == nil && credSection.HasKey("aws_access_key_id") && credSection.HasKey("aws_secret_access_key") {
@@ -424,7 +424,7 @@ func UpdateCredentialsFile(creds *TempCredentials, region, profileName string) e
 	section.Key("# source_profile").SetValue(profileName)
 
 	// Save the file
-	return cfg.SaveTo(credentialsPath)
+	return awsini.Save(cfg, credentialsPath)
 }
 
 // GetCurrentProfileName returns the name of the profile currently set in default
@@ -435,7 +435,7 @@ func GetCurrentProfileName() string {
 	}
 
 	// Try to load with ini first (faster)
-	cfg, err := ini.Load(credentialsPath)
+	cfg, err := awsini.Load(credentialsPath)
 	if err == nil {
 		section, err := cfg.GetSection("default")
 		if err == nil {
@@ -493,7 +493,7 @@ func UpdateStaticProfile(profileName string) error {
 
 	// Load config file to get region (optional)
 	var region string
-	cfgFile, err := ini.Load(configPath)
+	cfgFile, err := awsini.Load(configPath)
 	if err == nil {
 		if configSection, err := getProfileSection(cfgFile, profileName); err == nil {
 			region = configSection.Key("region").String()
@@ -501,7 +501,7 @@ func UpdateStaticProfile(profileName string) error {
 	}
 
 	// Load credentials file to get static credentials and region if needed
-	credFile, err := ini.Load(credentialsPath)
+	credFile, err := awsini.Load(credentialsPath)
 	if err != nil {
 		return fmt.Errorf("failed to read AWS credentials file: %w", err)
 	}
@@ -556,7 +556,7 @@ func UpdateStaticProfile(profileName string) error {
 	// Track the source profile name
 	defaultSection.Key("# source_profile").SetValue(profileName)
 
-	return credFile.SaveTo(credentialsPath)
+	return awsini.Save(credFile, credentialsPath)
 }
 
 // SetRegion updates the region in the default profile
@@ -598,7 +598,7 @@ func SetRegion(region string) error {
 	}
 
 	// Save the file
-	return cfg.SaveTo(credentialsPath)
+	return awsini.Save(cfg, credentialsPath)
 }
 
 // ClearDefaultProfile removes all credentials and region from the default profile
@@ -608,7 +608,7 @@ func ClearDefaultProfile() error {
 		return err
 	}
 
-	cfg, err := ini.Load(credentialsPath)
+	cfg, err := awsini.Load(credentialsPath)
 	if err != nil {
 		return fmt.Errorf("failed to load credentials file: %w", err)
 	}
@@ -625,7 +625,7 @@ func ClearDefaultProfile() error {
 	section.DeleteKey("region")
 	section.DeleteKey("# source_profile")
 
-	return cfg.SaveTo(credentialsPath)
+	return awsini.Save(cfg, credentialsPath)
 }
 
 // checkSSOLoginNeeded checks if an SSO profile needs login
@@ -649,7 +649,10 @@ func PerformSSOLogin(ssoSession string) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("aws sso login failed: %w", err)
+		// The output above comes from the AWS CLI, and a failure here is
+		// almost never about the browser: point at the CLI rather than
+		// leaving the "your browser should open" line as the last word.
+		return fmt.Errorf("aws sso login failed: %w\n\nThe error above was reported by the AWS CLI itself. To see the full detail, run:\n  aws sso login --sso-session %s --debug", err, ssoSession)
 	}
 	util.SuccessColor.Fprintln(os.Stderr, "✔ SSO login successful.")
 	return nil
