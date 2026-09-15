@@ -55,6 +55,7 @@ var profileAddIAMUserCmd = &cobra.Command{
 		}
 
 		tui.PrintSuccess(fmt.Sprintf("IAM user profile '%s' added successfully", profileName))
+		offerToRestrictConfig()
 		return nil
 	},
 }
@@ -99,12 +100,24 @@ var profileAddIAMRoleCmd = &cobra.Command{
 			return err
 		}
 
+		externalID, err := tui.PromptInput("External ID",
+			tui.WithPlaceholder("optional - required by some cross-account roles"))
+		if err != nil {
+			return err
+		}
+
 		region, err := tui.SelectRegion()
 		if err != nil {
 			return err
 		}
 
-		if err := aws.AddIAMRoleProfile(profileName, roleArn, strings.TrimSpace(sourceProfile), strings.TrimSpace(mfaSerial), region); err != nil {
+		if err := aws.AddIAMRoleProfile(profileName, aws.IAMRoleProfile{
+			RoleARN:       roleArn,
+			SourceProfile: strings.TrimSpace(sourceProfile),
+			MFASerial:     strings.TrimSpace(mfaSerial),
+			ExternalID:    strings.TrimSpace(externalID),
+			Region:        region,
+		}); err != nil {
 			return fmt.Errorf("failed to add IAM role profile: %w", err)
 		}
 

@@ -235,3 +235,33 @@ func writeAtomic(path string, content []byte) error {
 	}
 	return nil
 }
+
+// TooPermissive reports whether path can be read by anyone other than its
+// owner, along with the mode it currently has.
+//
+// The AWS config file is conventionally 0644, which is fine while it only holds
+// profile settings. Once static credentials are written into a profile the same
+// mode makes them readable by every account on the machine, so callers that
+// write secrets should check and offer to tighten it.
+//
+// A file that does not exist, or that cannot be stated, is not reported as a
+// problem: there is nothing there to expose.
+func TooPermissive(path string) (bool, os.FileMode, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, 0, nil
+		}
+		return false, 0, err
+	}
+	mode := info.Mode().Perm()
+	return mode&0o077 != 0, mode, nil
+}
+
+// Restrict tightens path to owner-only access.
+func Restrict(path string) error {
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("failed to restrict permissions on %s: %w", path, err)
+	}
+	return nil
+}

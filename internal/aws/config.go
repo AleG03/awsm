@@ -165,6 +165,7 @@ type ProfileInfo struct {
 	SSORoleName   string
 	SSOSession    string
 	MFASerial     string
+	ExternalID    string
 	IsActive      bool
 	AccessKey     string `json:"access_key,omitempty"`
 	SecretKey     string `json:"secret_key,omitempty"`
@@ -236,14 +237,23 @@ func ListProfilesDetailed() ([]ProfileInfo, error) {
 				SSORoleName:   section.Key("sso_role_name").String(),
 				SSOSession:    section.Key("sso_session").String(),
 				MFASerial:     section.Key("mfa_serial").String(),
+				ExternalID:    section.Key("external_id").String(),
 				IsActive:      profileName == activeProfile,
 			}
 
-			// Add credentials if it's a key profile
-			if profile.Type == ProfileTypeKey && credCfg != nil {
-				if credSection, err := credCfg.GetSection(profileName); err == nil {
-					profile.AccessKey = credSection.Key("aws_access_key_id").String()
-					profile.SecretKey = credSection.Key("aws_secret_access_key").String()
+			// Static keys can be in the profile itself or in the credentials
+			// file. The credentials file wins when both define the profile,
+			// matching how the AWS CLI resolves them.
+			if profile.Type == ProfileTypeKey {
+				profile.AccessKey = section.Key("aws_access_key_id").String()
+				profile.SecretKey = section.Key("aws_secret_access_key").String()
+				if credCfg != nil {
+					if credSection, err := credCfg.GetSection(profileName); err == nil {
+						if key := credSection.Key("aws_access_key_id").String(); key != "" {
+							profile.AccessKey = key
+							profile.SecretKey = credSection.Key("aws_secret_access_key").String()
+						}
+					}
 				}
 			}
 
@@ -400,59 +410,48 @@ func ListSSOSessions() ([]SSOSessionInfo, error) {
 	return sessions, nil
 }
 
-// AddIAMUserProfile adds a new IAM user profile with static credentials
+// AddIAMUserProfile adds a new IAM user profile with static credentials.
+//
+// Everything goes into one [profile x] section in the config file, keys
+// included. The AWS CLI reads aws_access_key_id from either file, and keeping
+// the profile in one place avoids the split that made a profile's region and
+// its keys live in two files that can drift apart. It also survives tools that
+// rewrite ~/.aws/credentials wholesale, which is how Leapp behaves.
+//
+// The config then holds secrets, so callers should follow up with the
+// permission check in awsini: a config is normally world-readable.
 func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
-	// Add credentials to credentials file
-	credentialsPath, err := GetAWSCredentialsPath()
-	if err != nil {
-		return err
-	}
-
-	// Create .aws directory if it doesn't exist
-	awsDir := filepath.Dir(credentialsPath)
-	if err := os.MkdirAll(awsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create AWS directory: %w", err)
-	}
-
-	// Load or create credentials file
-	credCfg, err := loadOrCreateIni(credentialsPath)
-	if err != nil {
-		return err
-	}
-
-	// Create profile section in credentials
-	credSection, err := credCfg.NewSection(profileName)
-	if err != nil {
-		return fmt.Errorf("failed to create profile section: %w", err)
-	}
-
-	credSection.Key("aws_access_key_id").SetValue(accessKey)
-	credSection.Key("aws_secret_access_key").SetValue(secretKey)
-
-	if err := saveCredentialsWithDefaultLast(credCfg, credentialsPath); err != nil {
-		return err
-	}
-
-	// Add profile to config file
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
 		return err
 	}
 
-	// Load or create config file
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("failed to create AWS directory: %w", err)
+	}
+
 	configCfg, err := loadOrCreateIni(configPath)
 	if err != nil {
 		return err
 	}
 
-	// Create profile section in config
-	configSectionName := fmt.Sprintf("profile %s", profileName)
-	configSection, err := configCfg.NewSection(configSectionName)
+	// Reuse the section when it is already there: NewSection on an existing
+	// name hands back the same section anyway, and going through
+	// getProfileSection keeps any key the user put there by hand.
+	sectionName := fmt.Sprintf("profile %s", profileName)
+	configSection, err := configCfg.GetSection(sectionName)
 	if err != nil {
-		return fmt.Errorf("failed to create config profile section: %w", err)
+		configSection, err = configCfg.NewSection(sectionName)
+		if err != nil {
+			return fmt.Errorf("failed to create config profile section: %w", err)
+		}
 	}
 
-	configSection.Key("region").SetValue(region)
+	configSection.Key("aws_access_key_id").SetValue(accessKey)
+	configSection.Key("aws_secret_access_key").SetValue(secretKey)
+	if region != "" {
+		configSection.Key("region").SetValue(region)
+	}
 
 	if err := awsini.Save(configCfg, configPath); err != nil {
 		return fmt.Errorf("failed to save config file: %w", err)
@@ -463,8 +462,59 @@ func AddIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 	return nil
 }
 
+// IAMRoleProfile describes an assume-role profile as it is written to the
+// config file. It is a struct rather than a parameter list because the AWS CLI
+// keeps adding keys here and six positional strings in a row invite silent
+// argument swaps.
+type IAMRoleProfile struct {
+	RoleARN       string
+	SourceProfile string
+	MFASerial     string
+	ExternalID    string
+	Region        string
+}
+
+// UpdateIAMUserProfile updates an existing IAM user profile in place.
+//
+// The keys are rewritten wherever they already are. New profiles go into the
+// config, but a profile whose keys are in ~/.aws/credentials keeps them there:
+// writing the new pair into the config while the old pair stayed in the
+// credentials file would leave the old one in force, since that file takes
+// precedence, and the profile would keep authenticating with the keys the user
+// just replaced.
+//
+// Updating in place also preserves keys awsm knows nothing about, which
+// delete-then-recreate silently dropped.
+func UpdateIAMUserProfile(profileName, accessKey, secretKey, region string) error {
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+
+	credCfg, credErr := awsini.Load(credentialsPath)
+	if credErr == nil {
+		if credSection, err := credCfg.GetSection(profileName); err == nil &&
+			credSection.Key("aws_access_key_id").String() != "" {
+			credSection.Key("aws_access_key_id").SetValue(accessKey)
+			credSection.Key("aws_secret_access_key").SetValue(secretKey)
+			if err := saveCredentialsWithDefaultLast(credCfg, credentialsPath); err != nil {
+				return err
+			}
+			if region != "" {
+				return UpdateProfileRegion(profileName, region)
+			}
+			InvalidateProfileCache()
+			return nil
+		}
+	}
+
+	// Not in the credentials file: the keys belong in the profile, and
+	// AddIAMUserProfile updates the section rather than replacing it.
+	return AddIAMUserProfile(profileName, accessKey, secretKey, region)
+}
+
 // AddIAMRoleProfile adds a new IAM role profile
-func AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region string) error {
+func AddIAMRoleProfile(profileName string, p IAMRoleProfile) error {
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
 		return err
@@ -488,22 +538,26 @@ func AddIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region st
 		return fmt.Errorf("failed to create profile section: %w", err)
 	}
 
-	section.Key("role_arn").SetValue(roleArn)
-	if sourceProfile != "" {
-		section.Key("source_profile").SetValue(sourceProfile)
-	}
-	if mfaSerial != "" {
-		section.Key("mfa_serial").SetValue(mfaSerial)
-	}
-	if region != "" {
-		section.Key("region").SetValue(region)
+	section.Key("role_arn").SetValue(p.RoleARN)
+	for _, kv := range []struct{ key, value string }{
+		{"source_profile", p.SourceProfile},
+		{"mfa_serial", p.MFASerial},
+		{"external_id", p.ExternalID},
+		{"region", p.Region},
+	} {
+		if kv.value != "" {
+			section.Key(kv.key).SetValue(kv.value)
+		}
 	}
 
 	return awsini.Save(cfg, configPath)
 }
 
-// UpdateIAMRoleProfile updates an existing IAM role profile in place
-func UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region string) error {
+// UpdateIAMRoleProfile updates an existing IAM role profile in place.
+//
+// In place matters: the section keeps any key awsm does not know about, such as
+// a nested "s3 =" block. Deleting and recreating the profile would drop them.
+func UpdateIAMRoleProfile(profileName string, p IAMRoleProfile) error {
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
 		return err
@@ -519,21 +573,18 @@ func UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region
 		return err
 	}
 
-	section.Key("role_arn").SetValue(roleArn)
-	if sourceProfile != "" {
-		section.Key("source_profile").SetValue(sourceProfile)
-	} else {
-		section.DeleteKey("source_profile")
-	}
-	if mfaSerial != "" {
-		section.Key("mfa_serial").SetValue(mfaSerial)
-	} else {
-		section.DeleteKey("mfa_serial")
-	}
-	if region != "" {
-		section.Key("region").SetValue(region)
-	} else {
-		section.DeleteKey("region")
+	section.Key("role_arn").SetValue(p.RoleARN)
+	for _, kv := range []struct{ key, value string }{
+		{"source_profile", p.SourceProfile},
+		{"mfa_serial", p.MFASerial},
+		{"external_id", p.ExternalID},
+		{"region", p.Region},
+	} {
+		if kv.value != "" {
+			section.Key(kv.key).SetValue(kv.value)
+		} else {
+			section.DeleteKey(kv.key)
+		}
 	}
 
 	return awsini.Save(cfg, configPath)
@@ -698,7 +749,13 @@ func ImportProfile(profile ProfileInfo) error {
 		// Import IAM user profile with actual credentials from export
 		return AddIAMUserProfile(profile.Name, profile.AccessKey, profile.SecretKey, profile.Region)
 	case ProfileTypeIAM:
-		return AddIAMRoleProfile(profile.Name, profile.RoleARN, profile.SourceProfile, profile.MFASerial, profile.Region)
+		return AddIAMRoleProfile(profile.Name, IAMRoleProfile{
+			RoleARN:       profile.RoleARN,
+			SourceProfile: profile.SourceProfile,
+			MFASerial:     profile.MFASerial,
+			ExternalID:    profile.ExternalID,
+			Region:        profile.Region,
+		})
 	case ProfileTypeSSO:
 		return AddSSOProfile(profile.Name, profile.SSOSession, profile.SSOAccountID, profile.SSORoleName, profile.Region)
 	default:

@@ -118,7 +118,54 @@ func checkAWSFiles() []checkResult {
 		out = append(out, fileCheck("AWS files", "~/.aws/credentials", credPath, 0o600))
 	}
 
+	if cfgPath != "" {
+		out = append(out, secretsInConfigCheck(cfgPath))
+	}
+
 	return out
+}
+
+// secretsInConfigCheck reports a config that holds static credentials while
+// being readable by others. fileCheck already warns about the mode, but a
+// config carrying access keys is a different severity from one carrying only
+// regions, and awsm now writes IAM user keys there itself.
+func secretsInConfigCheck(path string) checkResult {
+	const name = "config secrets"
+
+	permissive, mode, err := awsini.TooPermissive(path)
+	if err != nil {
+		return checkResult{Category: "AWS files", Name: name, Status: statusFail, Message: err.Error()}
+	}
+
+	cfg, err := awsini.Load(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return checkResult{Category: "AWS files", Name: name, Status: statusOK, Message: "no config file"}
+		}
+		return checkResult{Category: "AWS files", Name: name, Status: statusFail, Message: err.Error()}
+	}
+
+	var withKeys []string
+	for _, section := range cfg.Sections() {
+		if section.Key("aws_access_key_id").String() != "" {
+			withKeys = append(withKeys, strings.TrimPrefix(section.Name(), "profile "))
+		}
+	}
+
+	if len(withKeys) == 0 {
+		return checkResult{Category: "AWS files", Name: name, Status: statusOK, Message: "no static keys in config"}
+	}
+	if runtime.GOOS != "windows" && permissive {
+		return checkResult{
+			Category: "AWS files", Name: name, Status: statusFail,
+			Message: fmt.Sprintf("%d profile(s) keep access keys in the config, which is mode %o and readable by other users: %s — run chmod 600 %s",
+				len(withKeys), mode, strings.Join(withKeys, ", "), path),
+		}
+	}
+	return checkResult{
+		Category: "AWS files", Name: name, Status: statusOK,
+		Message: fmt.Sprintf("%d profile(s) keep access keys in the config, which is owner-only", len(withKeys)),
+	}
 }
 
 func fileCheck(category, label, path string, maxMode fs.FileMode) checkResult {

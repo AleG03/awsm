@@ -66,6 +66,7 @@ func editIAMProfile(profileName string, current *aws.ProfileInfo) error {
 	tui.PrintKeyValue("Role ARN", current.RoleARN)
 	tui.PrintKeyValue("Source Profile", current.SourceProfile)
 	tui.PrintKeyValue("MFA Serial", current.MFASerial)
+	tui.PrintKeyValue("External ID", current.ExternalID)
 	tui.PrintKeyValue("Region", current.Region)
 
 	roleArn, err := tui.PromptInput("Role ARN", tui.WithDefault(current.RoleARN))
@@ -92,6 +93,14 @@ func editIAMProfile(profileName string, current *aws.ProfileInfo) error {
 		mfaSerial = current.MFASerial
 	}
 
+	externalID, err := tui.PromptInput("External ID", tui.WithDefault(current.ExternalID))
+	if err != nil {
+		return err
+	}
+	if externalID == "" {
+		externalID = current.ExternalID
+	}
+
 	region, err := tui.PromptInput("Region", tui.WithDefault(current.Region))
 	if err != nil {
 		return err
@@ -100,7 +109,13 @@ func editIAMProfile(profileName string, current *aws.ProfileInfo) error {
 		region = current.Region
 	}
 
-	if err := aws.UpdateIAMRoleProfile(profileName, roleArn, sourceProfile, mfaSerial, region); err != nil {
+	if err := aws.UpdateIAMRoleProfile(profileName, aws.IAMRoleProfile{
+		RoleARN:       roleArn,
+		SourceProfile: sourceProfile,
+		MFASerial:     mfaSerial,
+		ExternalID:    externalID,
+		Region:        region,
+	}); err != nil {
 		return fmt.Errorf("failed to update profile: %w", err)
 	}
 
@@ -142,10 +157,7 @@ func editIAMUserProfile(profileName string, current *aws.ProfileInfo) error {
 	}
 
 	if accessKey != "" && secretKey != "" {
-		if err := aws.DeleteProfile(profileName); err != nil {
-			return fmt.Errorf("failed to delete old profile: %w", err)
-		}
-		if err := aws.AddIAMUserProfile(profileName, accessKey, secretKey, region); err != nil {
+		if err := aws.UpdateIAMUserProfile(profileName, accessKey, secretKey, region); err != nil {
 			return fmt.Errorf("failed to update profile: %w", err)
 		}
 	} else {
@@ -155,6 +167,9 @@ func editIAMUserProfile(profileName string, current *aws.ProfileInfo) error {
 	}
 
 	tui.PrintSuccess(fmt.Sprintf("Profile '%s' updated successfully", profileName))
+	if accessKey != "" && secretKey != "" {
+		offerToRestrictConfig()
+	}
 	return nil
 }
 

@@ -231,3 +231,41 @@ region = us-east-1
 		t.Error("[default] should come before SSO block")
 	}
 }
+
+func TestOrganizerEmitsExternalIDWithTheRoleKeys(t *testing.T) {
+	// external_id is meaningless on its own: it belongs next to role_arn and
+	// source_profile, not pushed to the end with the unrecognised keys.
+	t.Setenv("HOME", t.TempDir())
+
+	path := filepath.Join(t.TempDir(), "config")
+	input := `[profile cross]
+region = eu-west-1
+external_id = SHARED
+source_profile = src
+role_arn = arn:aws:iam::123456789012:role/target
+`
+	if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := OrganizeConfigFile(path); err != nil {
+		t.Fatalf("OrganizeConfigFile: %v", err)
+	}
+
+	out, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+
+	roleArn := strings.Index(got, "role_arn")
+	externalID := strings.Index(got, "external_id")
+	region := strings.Index(got, "region")
+	if externalID == -1 {
+		t.Fatalf("external_id missing from output:\n%s", got)
+	}
+	if !(roleArn < externalID && externalID < region) {
+		t.Errorf("expected role_arn < external_id < region, got %d, %d, %d in:\n%s",
+			roleArn, externalID, region, got)
+	}
+}

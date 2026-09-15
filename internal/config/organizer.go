@@ -212,8 +212,9 @@ func writeSectionAs(b *strings.Builder, section *ini.Section, name string) {
 	keyOrder := []string{
 		"sso_start_url", "sso_region", "sso_registration_scopes",
 		"sso_session", "sso_account_id", "sso_role_name",
-		"role_arn", "source_profile", "mfa_serial",
+		"role_arn", "source_profile", "mfa_serial", "external_id",
 		"credential_process",
+		"aws_access_key_id", "aws_secret_access_key", "aws_session_token",
 		"region", "output",
 	}
 

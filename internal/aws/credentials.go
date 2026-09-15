@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -114,6 +115,17 @@ type profileConfig struct {
 	MfaSerial     string
 	RoleArn       string
 	SourceProfile string
+	// ExternalId, RoleSessionName and DurationSeconds are honoured by the AWS
+	// CLI and were previously ignored here: external_id made cross-account
+	// roles that require it impossible to assume, and duration_seconds was
+	// overridden by a hardcoded hour.
+	ExternalId      string
+	RoleSessionName string
+	DurationSeconds int32
+	// CredentialSource is read only to reject it explicitly. It replaces
+	// source_profile with credentials taken from EC2/ECS/the environment,
+	// which assumeRole below does not implement.
+	CredentialSource string
 }
 
 // ProfileNeedsMFA checks if a profile requires MFA and returns the MFA serial.
@@ -235,9 +247,22 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	}
 
 	pConfig := &profileConfig{
-		MfaSerial:     section.Key("mfa_serial").String(),
-		RoleArn:       section.Key("role_arn").String(),
-		SourceProfile: section.Key("source_profile").String(),
+		MfaSerial:        section.Key("mfa_serial").String(),
+		RoleArn:          section.Key("role_arn").String(),
+		SourceProfile:    section.Key("source_profile").String(),
+		ExternalId:       section.Key("external_id").String(),
+		RoleSessionName:  section.Key("role_session_name").String(),
+		CredentialSource: section.Key("credential_source").String(),
+	}
+
+	// A duration we cannot parse is a mistake in the file, not a reason to
+	// silently fall back to an hour and leave the user wondering.
+	if raw := strings.TrimSpace(section.Key("duration_seconds").String()); raw != "" {
+		seconds, err := strconv.Atoi(raw)
+		if err != nil || seconds <= 0 {
+			return nil, "", fmt.Errorf("profile '%s' has an invalid duration_seconds %q: want a positive number of seconds", profileName, raw)
+		}
+		pConfig.DurationSeconds = int32(seconds)
 	}
 
 	if pConfig.RoleArn != "" || pConfig.MfaSerial != "" {
@@ -280,6 +305,15 @@ func handleIamProfile(profileName string, pConfig *profileConfig, mfaToken strin
 func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*types.Credentials, error) {
 	util.InfoColor.Fprintf(os.Stderr, "Assuming role %s...\n", util.BoldColor.Sprint(pConfig.RoleArn))
 
+	// Without a source_profile the STS client would be built from this very
+	// profile, which is the one holding role_arn: the SDK would resolve it by
+	// assuming the role itself and awsm would then assume it a second time.
+	// credential_source is the supported way to express that, and awsm does not
+	// implement it, so say so rather than producing that double assumption.
+	if pConfig.SourceProfile == "" && pConfig.CredentialSource != "" {
+		return nil, fmt.Errorf("profile '%s' uses credential_source = %s, which awsm does not support yet; use source_profile, or run the command through the AWS CLI", profileName, pConfig.CredentialSource)
+	}
+
 	stsClientProfile := profileName
 	if pConfig.SourceProfile != "" {
 		stsClientProfile = pConfig.SourceProfile
@@ -320,10 +354,18 @@ func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*t
 
 	input := &sts.AssumeRoleInput{
 		RoleArn:         aws.String(pConfig.RoleArn),
-		RoleSessionName: aws.String("awsm-session"),
-		DurationSeconds: aws.Int32(3600),
+		RoleSessionName: aws.String(BuildRoleSessionName(pConfig.RoleSessionName, profileName)),
 	}
 
+	// Left unset, STS applies its own default of one hour. Sending a value the
+	// user did not ask for is what capped every session at an hour even when
+	// the role allowed twelve.
+	if pConfig.DurationSeconds > 0 {
+		input.DurationSeconds = aws.Int32(pConfig.DurationSeconds)
+	}
+	if pConfig.ExternalId != "" {
+		input.ExternalId = aws.String(pConfig.ExternalId)
+	}
 	if pConfig.MfaSerial != "" {
 		input.SerialNumber = aws.String(pConfig.MfaSerial)
 		input.TokenCode = tokenCode
@@ -491,38 +533,48 @@ func UpdateStaticProfile(profileName string) error {
 		return err
 	}
 
-	// Load config file to get region (optional)
-	var region string
+	// Static keys can live in either file: awsm writes them into the profile in
+	// the config, but the credentials file remains valid and is where anything
+	// written before, or by "aws configure", still keeps them.
+	var region, accessKey, secretKey, sessionToken string
+	var haveSessionToken bool
+
 	cfgFile, err := awsini.Load(configPath)
 	if err == nil {
 		if configSection, err := getProfileSection(cfgFile, profileName); err == nil {
 			region = configSection.Key("region").String()
+			accessKey = configSection.Key("aws_access_key_id").String()
+			secretKey = configSection.Key("aws_secret_access_key").String()
+			if configSection.HasKey("aws_session_token") {
+				sessionToken = configSection.Key("aws_session_token").String()
+				haveSessionToken = true
+			}
 		}
 	}
 
-	// Load credentials file to get static credentials and region if needed
-	credFile, err := awsini.Load(credentialsPath)
+	// The credentials file has to be loaded regardless: it is where the default
+	// profile being written lives.
+	credFile, err := awsini.LoadOrEmpty(credentialsPath)
 	if err != nil {
 		return fmt.Errorf("failed to read AWS credentials file: %w", err)
 	}
 
-	// If no region in config, check credentials file
-	if region == "" {
-		if credSection, err := credFile.GetSection(profileName); err == nil {
+	if credSection, err := credFile.GetSection(profileName); err == nil {
+		if region == "" {
 			region = credSection.Key("region").String()
+		}
+		// The credentials file wins when a profile is defined in both, which is
+		// what the AWS CLI itself does.
+		if credSection.Key("aws_access_key_id").String() != "" {
+			accessKey = credSection.Key("aws_access_key_id").String()
+			secretKey = credSection.Key("aws_secret_access_key").String()
+			sessionToken = credSection.Key("aws_session_token").String()
+			haveSessionToken = credSection.HasKey("aws_session_token")
 		}
 	}
 
-	sourceSection, err := credFile.GetSection(profileName)
-	if err != nil {
-		return fmt.Errorf("could not find credentials for profile '%s'", profileName)
-	}
-
-	accessKey := sourceSection.Key("aws_access_key_id").String()
-	secretKey := sourceSection.Key("aws_secret_access_key").String()
-
 	if accessKey == "" || secretKey == "" {
-		return fmt.Errorf("profile '%s' does not have static credentials", profileName)
+		return fmt.Errorf("profile '%s' does not have static credentials in %s or %s", profileName, configPath, credentialsPath)
 	}
 
 	// Update default section
@@ -537,16 +589,12 @@ func UpdateStaticProfile(profileName string) error {
 	defaultSection.Key("aws_access_key_id").SetValue(accessKey)
 	defaultSection.Key("aws_secret_access_key").SetValue(secretKey)
 
-	// Check if source profile has session token and copy it
-	if sourceSection.HasKey("aws_session_token") {
-		sessionToken := sourceSection.Key("aws_session_token").String()
-		if sessionToken != "" {
-			defaultSection.Key("aws_session_token").SetValue(sessionToken)
-		} else {
-			defaultSection.DeleteKey("aws_session_token")
-		}
+	// A stale token left on the default profile would be sent with the new
+	// keys and rejected, so it goes unless the source actually carries one.
+	if haveSessionToken && sessionToken != "" {
+		defaultSection.Key("aws_session_token").SetValue(sessionToken)
 	} else {
-		defaultSection.DeleteKey("aws_session_token") // Remove session token if not present in source
+		defaultSection.DeleteKey("aws_session_token")
 	}
 
 	if region != "" {
