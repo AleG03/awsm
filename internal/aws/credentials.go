@@ -144,6 +144,21 @@ func ProfileNeedsMFA(profileName string) (bool, string, error) {
 // It inspects the profile and dispatches to the correct handler.
 // If mfaToken is non-empty, it will be used instead of prompting interactively.
 func GetCredentialsForProfile(profileName string, mfaToken ...string) (creds *TempCredentials, isStatic bool, err error) {
+	return getCredentials(profileName, true, mfaToken...)
+}
+
+// GetFreshCredentialsForProfile is GetCredentialsForProfile with the cache
+// ignored.
+//
+// The cache is considered good until a minute before expiry, so anything trying
+// to renew credentials ahead of time gets the old ones handed straight back.
+// The cache is only replaced once the new credentials are in hand, so a failed
+// renewal leaves the still-valid ones alone.
+func GetFreshCredentialsForProfile(profileName string, mfaToken ...string) (creds *TempCredentials, isStatic bool, err error) {
+	return getCredentials(profileName, false, mfaToken...)
+}
+
+func getCredentials(profileName string, useCache bool, mfaToken ...string) (creds *TempCredentials, isStatic bool, err error) {
 	pConfig, profileType, err := inspectProfile(profileName)
 	if err != nil {
 		return nil, false, err
@@ -157,8 +172,10 @@ func GetCredentialsForProfile(profileName string, mfaToken ...string) (creds *Te
 	switch profileType {
 	case "iam":
 		// Check credential cache before prompting for MFA
-		if cached := getCachedCreds(profileName); cached != nil {
-			return cached, false, nil
+		if useCache {
+			if cached := getCachedCreds(profileName); cached != nil {
+				return cached, false, nil
+			}
 		}
 		tempCreds, err := handleIamProfile(profileName, pConfig, token)
 		if err != nil {
@@ -338,18 +355,38 @@ func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*t
 		return nil, fmt.Errorf("failed to load AWS config for source profile '%s': %w", stsClientProfile, err)
 	}
 
+	// With MFA, prefer authenticating the AssumeRole call with a cached MFA
+	// session over sending a fresh code every time. Those credentials carry
+	// aws:MultiFactorAuthPresent, so trust policies that demand MFA are still
+	// satisfied, and the code is typed once per session instead of hourly --
+	// which is also what makes unattended refresh possible at all.
 	var tokenCode *string
+	usedMFASession := false
 	if pConfig.MfaSerial != "" {
-		code := mfaToken
-		if code == "" {
-			prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
-			var err error
-			code, err = util.PromptForInput(prompt)
+		if canUseMFASession(stsClientProfile) {
+			session, err := mfaSessionCredentials(stsClientProfile, pConfig.MfaSerial, mfaToken)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read MFA token: %w", err)
+				return nil, err
 			}
+			awsCfg, err = staticCredentialsConfig(session, awsCfg.Region)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build AWS config from the MFA session: %w", err)
+			}
+			usedMFASession = true
+		} else {
+			// The source credentials are already temporary, so GetSessionToken
+			// would refuse them: send the code with the AssumeRole call.
+			code := mfaToken
+			if code == "" {
+				prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
+				var err error
+				code, err = util.PromptForInput(prompt)
+				if err != nil {
+					return nil, fmt.Errorf("failed to read MFA token: %w", err)
+				}
+			}
+			tokenCode = aws.String(code)
 		}
-		tokenCode = aws.String(code)
 	}
 
 	input := &sts.AssumeRoleInput{
@@ -366,7 +403,9 @@ func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*t
 	if pConfig.ExternalId != "" {
 		input.ExternalId = aws.String(pConfig.ExternalId)
 	}
-	if pConfig.MfaSerial != "" {
+	// Sending the code again alongside session credentials that already carry
+	// the MFA claim is both redundant and rejected by STS.
+	if pConfig.MfaSerial != "" && !usedMFASession {
 		input.SerialNumber = aws.String(pConfig.MfaSerial)
 		input.TokenCode = tokenCode
 	}
@@ -383,32 +422,18 @@ func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*t
 func getSessionToken(profileName string, pConfig *profileConfig, mfaToken string) (*types.Credentials, error) {
 	util.InfoColor.Fprintf(os.Stderr, "Getting session token for profile %s...\n", util.BoldColor.Sprint(profileName))
 
-	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(profileName))
+	// This is exactly the MFA session, so it goes through the same cache: an
+	// hour used to mean retyping the code every hour for no reason.
+	session, err := mfaSessionCredentials(profileName, pConfig.MfaSerial, mfaToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config for profile '%s': %w", profileName, err)
+		return nil, err
 	}
-
-	code := mfaToken
-	if code == "" {
-		prompt := fmt.Sprintf("Enter MFA token for %s: ", util.BoldColor.Sprint(pConfig.MfaSerial))
-		code, err = util.PromptForInput(prompt)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read MFA token: %w", err)
-		}
-	}
-
-	input := &sts.GetSessionTokenInput{
-		DurationSeconds: aws.Int32(3600),
-		SerialNumber:    aws.String(pConfig.MfaSerial),
-		TokenCode:       aws.String(code),
-	}
-
-	stsClient := sts.NewFromConfig(awsCfg)
-	result, err := stsClient.GetSessionToken(context.TODO(), input)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get session token: %w", err)
-	}
-	return result.Credentials, nil
+	return &types.Credentials{
+		AccessKeyId:     aws.String(session.AccessKeyId),
+		SecretAccessKey: aws.String(session.SecretAccessKey),
+		SessionToken:    aws.String(session.SessionToken),
+		Expiration:      aws.Time(session.Expires),
+	}, nil
 }
 
 // GetAWSCredentialsPath returns the path to the AWS credentials file.

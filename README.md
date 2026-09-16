@@ -18,6 +18,7 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 - **Search & Discovery**: Powerful search across profiles, account IDs, and SSO sessions with partial matching
 - **Browser Integration**: Open the console in specific Chrome profiles or Firefox containers
 - **Firefox Extension**: First-party [`AWSM Container Opener`](https://addons.mozilla.org/firefox/addon/awsm-container-opener/) add-on published on AMO; `awsm extension install` opens the listing for 1-click permanent install with auto-updates
+- **Automatic Credential Renewal**: `awsm daemon` keeps the active profile's credentials from expiring, with no resident process
 - **Shell Completion**: Full autocompletion support for bash, zsh, fish, and PowerShell
 - **Interactive UI**: Beautiful terminal interface with responsive design
 - **Import/Export**: Backup and restore your AWS configuration
@@ -376,6 +377,73 @@ awsm search --case-sensitive MyProfile
 ```
 
 #### Installation
+
+### Automatic Credential Renewal
+
+Temporary credentials expire after an hour. `awsm daemon` renews the active
+profile's credentials before that happens.
+
+```bash
+# Start renewing, and keep doing it at every login
+awsm daemon enable
+
+# Also open the SSO login page when the session can no longer be refreshed
+awsm daemon enable --auto-login
+
+awsm daemon status     # is it running, and what did it last do
+awsm daemon logs       # recent activity
+awsm daemon disable    # stop and remove the scheduled job
+```
+
+**Nothing stays resident.** The system scheduler runs `awsm` briefly once a
+minute, it checks how much life the credentials have left and exits: a cycle
+that finds nothing to do costs a few file reads and no network traffic. On
+macOS, 60 consecutive idle cycles — an hour's worth — measured 0.23 s of CPU in
+total, and nothing is held between them. A sleeping daemon would instead hold
+about 13 MB of memory around the clock to do the same job.
+
+Credentials are renewed once less than ten minutes remain. That margin is a
+retry budget rather than a safety cushion: everything under it is time available
+to recover from a failed attempt before anything actually expires. Already
+expired credentials — the normal state after the machine has been asleep — are
+renewed at the next cycle rather than ignored.
+
+It uses a LaunchAgent on macOS, a systemd user timer on Linux, and a Scheduled
+Task on Windows. All three start it at login, and `disable` removes the job
+entirely.
+
+#### What it cannot renew on its own
+
+Two situations need you, and both are detected before any network call, then
+reported **once** rather than retried every minute:
+
+- **Profiles requiring an MFA code.** Covered while a cached MFA session lasts
+  (see below); after that the code has to be typed again.
+- **SSO sessions that can no longer be refreshed.** Ordinary SSO token expiry is
+  handled silently: the daemon renews the token half an hour before it lapses,
+  using the refresh token the AWS CLI stored at login. Access tokens are
+  short — an hour against one Identity Center tested here — so without this
+  you are logged out roughly hourly. The browser is needed only once the
+  refresh token itself stops being accepted, which the daemon recognises by the
+  `InvalidGrantException` that comes back and reports once rather than retrying.
+
+### MFA sessions
+
+A profile with `mfa_serial` used to ask for a code on every renewal. awsm now
+obtains a session token once, valid for up to 36 hours, and derives role
+credentials from it without asking again. Those credentials still carry the MFA
+claim, so trust policies that require MFA are satisfied.
+
+This is what makes MFA profiles renewable unattended. Two consequences worth
+knowing:
+
+- `~/.awsm/cache/` now holds a credential that stays valid for up to 36 hours.
+  The file is owner-only, and `awsm profile set` re-acquires it once it lapses.
+  `awsm daemon` never creates one, since obtaining it needs a code.
+- For a profile that uses `mfa_serial` without `role_arn`, `awsm whoami` will
+  report a TTL of up to 36 hours where it used to say one hour. That is the
+  session's real lifetime; it did not change, it was simply being re-acquired
+  every hour before.
 
 ### Shell Completion
 
