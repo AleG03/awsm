@@ -81,9 +81,7 @@ func Tick(opts Options) Decision {
 		}
 
 	case ActionNotifyMFA:
-		alertOnce(&state, snapshot, BlockedMFA, "AWS credentials need MFA",
-			fmt.Sprintf("Profile %s needs an MFA code. Run: %s",
-				snapshot.Profile, AwsmCommand("profile", "set", snapshot.Profile)))
+		alertMFA(&state, snapshot)
 
 	case ActionUnsupported:
 		alertOnce(&state, snapshot, BlockedOther, "AWS credentials not renewable", decision.Reason)
@@ -144,9 +142,7 @@ func refresh(s Snapshot, opts Options, state *State) error {
 			return fmt.Errorf("SSO session for %s needs a new login", s.Profile)
 		}
 		if errors.Is(err, util.ErrNonInteractive) {
-			alertOnce(state, s, "AWS credentials need MFA",
-				fmt.Sprintf("Profile %s needs an MFA code.", s.Profile),
-				AwsmCommand("profile", "set", s.Profile))
+			alertMFA(state, s)
 			return fmt.Errorf("profile %s needs an MFA code", s.Profile)
 		}
 		return err
@@ -185,6 +181,19 @@ func handleExpiredSSO(s Snapshot, opts Options, state *State) {
 	}
 	alertOnce(state, s, BlockedSSO, "AWS SSO session expired",
 		fmt.Sprintf("Profile %s needs a new login. Run: %s", s.Profile, command))
+}
+
+// alertMFA is the only place that phrases the "type a code" alert.
+//
+// Two paths reach it: the decision that no cached MFA session exists, and a
+// renewal that only discovers it needs a code once STS refuses. Having them
+// share one call is not just tidiness -- the duplicate was written with its
+// arguments shifted by one, which compiled because BlockedReason is a string,
+// and left the prompt drawing a warning sign with nothing beside it.
+func alertMFA(state *State, s Snapshot) {
+	alertOnce(state, s, BlockedMFA, "AWS credentials need MFA",
+		fmt.Sprintf("Profile %s needs an MFA code. Run: %s",
+			s.Profile, AwsmCommand("profile", "set", s.Profile)))
 }
 
 // alertOnce reports a situation the user has to resolve, offering the command
