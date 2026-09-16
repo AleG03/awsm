@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"awsm/internal/aws"
+	"awsm/internal/daemon"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ var (
 	promptEmptyOnNone bool
 )
 
-const defaultPromptFormat = "{icon} {profile}:{region} {ttl}"
+const defaultPromptFormat = "{icon} {profile}:{region} {ttl}{blocked}"
 
 var promptCmd = &cobra.Command{
 	Use:   "prompt",
@@ -36,6 +37,7 @@ The format string supports the following placeholders:
   {ttl}      remaining TTL of cached credentials (e.g. "2h15m", "expired", "static")
   {account}  AWS account id (only available when present in profile config)
   {icon}     small icon based on profile type
+  {blocked}  warning when the refresh daemon needs you (e.g. " ⚠ MFA", " ⚠ SSO")
 
 Examples:
   awsm prompt
@@ -73,6 +75,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	ttlText, ttlColor := computeTTL(profile, pType)
 
 	repl := strings.NewReplacer(
+		"{blocked}", blockedMarker(profile, promptNoColor),
 		"{profile}", profile,
 		"{region}", region,
 		"{type}", string(pType),
@@ -141,6 +144,23 @@ func computeTTL(profile string, pType aws.ProfileType) (string, lipgloss.Color) 
 	default:
 		return humanizeDuration(d), lipgloss.Color("#10B981")
 	}
+}
+
+// blockedMarker reports what the refresh daemon is stuck on, if anything.
+//
+// The daemon's notification is a moment; this is the reminder that stays, and
+// it appears where the credentials are about to be used rather than in the
+// middle of the screen. Empty when nothing is wrong, so a healthy prompt is
+// unchanged.
+func blockedMarker(profile string, noColor bool) string {
+	if profile == "" {
+		return ""
+	}
+	reason, ok := daemon.BlockedFor(profile)
+	if !ok {
+		return ""
+	}
+	return " " + colorize("⚠ "+reason.Short(), lipgloss.Color("#EF4444"), noColor)
 }
 
 func iconFor(pType aws.ProfileType) string {

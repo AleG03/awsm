@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -44,6 +45,23 @@ func executablePath() (string, error) {
 		return "", fmt.Errorf("could not determine the awsm executable path: %w", err)
 	}
 	return path, nil
+}
+
+// AwsmCommand renders a command line that runs this very binary.
+//
+// Suggesting a bare "awsm" would resolve through PATH, which may hold a
+// different build than the one raising the alert -- exactly the confusion that
+// makes a fix appear not to work. The scheduled job already records the
+// absolute path for the same reason.
+func AwsmCommand(args ...string) string {
+	exe, err := executablePath()
+	if err != nil {
+		exe = "awsm"
+	}
+	if strings.ContainsAny(exe, " \t") {
+		exe = "'" + exe + "'"
+	}
+	return exe + " " + strings.Join(args, " ")
 }
 
 // tickArgs are the arguments the scheduled job runs with.

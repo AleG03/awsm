@@ -129,7 +129,7 @@ func Decide(s Snapshot) Decision {
 	// credentials derived from it.
 	if s.Kind == KindSSO && s.HaveSSOToken && s.SSOTokenExpiry.Sub(s.Now) < SSOTokenThreshold {
 		return Decision{ActionRefreshSSOToken, fmt.Sprintf(
-			"SSO token for %s expires %s", s.Profile, humanize(s.SSOTokenExpiry.Sub(s.Now)))}
+			"SSO token for %s %s", s.Profile, expiryPhrase(s.SSOTokenExpiry.Sub(s.Now)))}
 	}
 
 	if !s.HaveCredentials {
@@ -138,30 +138,43 @@ func Decide(s Snapshot) Decision {
 
 	remaining := s.CredentialsExpiry.Sub(s.Now)
 	if remaining >= CredentialsThreshold {
-		return Decision{ActionNone, fmt.Sprintf("credentials for %s expire %s", s.Profile, humanize(remaining))}
+		return Decision{ActionNone, fmt.Sprintf("credentials for %s %s", s.Profile, expiryPhrase(remaining))}
 	}
 
 	if s.Kind == KindRoleMFA && !s.MFASessionValid {
 		return Decision{ActionNotifyMFA, fmt.Sprintf(
-			"credentials for %s expire %s and need an MFA code", s.Profile, humanize(remaining))}
+			"credentials for %s %s and need an MFA code", s.Profile, expiryPhrase(remaining))}
 	}
 
 	return Decision{ActionRefresh, fmt.Sprintf(
-		"credentials for %s expire %s", s.Profile, humanize(remaining))}
+		"credentials for %s %s", s.Profile, expiryPhrase(remaining))}
 }
 
-// humanize renders a duration the way it reads in a log line, including when
-// it is in the past.
-func humanize(d time.Duration) string {
+// expiryPhrase renders how long is left as a clause that can follow a subject:
+// "credentials for work " + expiryPhrase(d).
+//
+// The verb changes with the sign, because "expires 50 days ago" is not
+// something anyone would write, and these strings are read by the user in
+// notifications rather than only in a log.
+func expiryPhrase(d time.Duration) string {
 	if d < 0 {
-		return fmt.Sprintf("%s ago", round(-d))
+		return fmt.Sprintf("expired %s ago", humanizeSpan(-d))
 	}
-	return fmt.Sprintf("in %s", round(d))
+	return fmt.Sprintf("expire in %s", humanizeSpan(d))
 }
 
-func round(d time.Duration) time.Duration {
-	if d < time.Minute {
-		return d.Round(time.Second)
+// humanizeSpan renders a duration at a precision that suits its size. A token
+// that lapsed seven weeks ago was being reported as "1196h6m0s", which is
+// accurate and unreadable.
+func humanizeSpan(d time.Duration) string {
+	switch {
+	case d >= 48*time.Hour:
+		return fmt.Sprintf("%d days", int(d.Hours()/24))
+	case d >= 2*time.Hour:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	case d >= time.Minute:
+		return d.Round(time.Minute).String()
+	default:
+		return d.Round(time.Second).String()
 	}
-	return d.Round(time.Minute)
 }

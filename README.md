@@ -9,7 +9,7 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 - **MFA Support**: Streamlined MFA token handling for IAM profiles
 - **Identity Inspection**: `awsm whoami` shows account, ARN, region and credentials TTL at a glance
 - **Run Commands Scoped to a Profile**: `awsm run` injects AWS credentials into a child process without polluting your shell
-- **Shell Prompt Integration**: `awsm prompt` produces a fast, offline status string for use in PS1 / starship
+- **Shell Prompt Integration**: `awsm prompt` produces a fast, offline status string for use, including a warning when the renewal daemon needs you
 - **Diagnostics**: `awsm doctor` audits your local setup (config files, permissions, external tools, browsers)
 - **Smart Conflict Resolution**: Intelligent handling of profile name conflicts during creation
 - **Console Access**: Open the AWS console in your browser with proper credentials
@@ -130,7 +130,7 @@ to execute. The child process's exit code is propagated.
 in your shell prompt. It is fast and offline (no AWS API calls).
 
 ```bash
-# Default format: "{icon} {profile}:{region} {ttl}"
+# Default format: "{icon} {profile}:{region} {ttl}{blocked}"
 awsm prompt
 
 # Custom format
@@ -145,7 +145,32 @@ awsm prompt --empty-on-none
 ```
 
 Available placeholders: `{profile}`, `{region}`, `{type}`, `{ttl}`, `{account}`,
-`{icon}`.
+`{icon}`, `{blocked}`.
+
+`{blocked}` is empty unless the renewal daemon is stuck on something only you
+can resolve, in which case it becomes ` ⚠ MFA` or ` ⚠ SSO`:
+
+```
+🔐 prod-admin:eu-west-1 52m10s          # healthy
+🔐 prod-admin:eu-west-1 2m09s ⚠ MFA     # needs an MFA code
+☁ client-admin:eu-central-1 4m32s ⚠ SSO # needs an SSO login
+```
+
+A notification is a moment; this is the reminder that stays, and it appears
+where you are about to use AWS. It reads the daemon's own state file, so it
+never disagrees with what the notification said, and it clears itself as soon
+as a renewal succeeds. See [Automatic Credential Renewal](#automatic-credential-renewal).
+
+**Zsh** (`~/.zshrc`) — on the right-hand side, where it does not move the
+cursor as you type:
+
+```bash
+setopt PROMPT_SUBST
+RPROMPT='$(awsm prompt --empty-on-none)'
+```
+
+The single quotes matter: they keep `$(...)` from being evaluated once when the
+file loads instead of on every prompt.
 
 **Starship example** (`~/.config/starship.toml`):
 
@@ -157,11 +182,18 @@ format = "[$output]($style) "
 style = "bold cyan"
 ```
 
-**Bash/Zsh PS1 example**:
+**Bash PS1 example**:
 
 ```bash
 PS1='$(awsm prompt --empty-on-none) \w $ '
 ```
+
+Cost: one invocation per prompt, measured at about 6 ms. Nothing runs in the
+background — the shell calls `awsm`, which reads two local files and exits.
+
+None of this is required. The daemon renews credentials whether or not the
+prompt shows anything; what you lose without it is seeing a stuck renewal
+between the notification and the moment you act on it.
 
 ### Diagnostics
 
@@ -415,7 +447,10 @@ entirely.
 #### What it cannot renew on its own
 
 Two situations need you, and both are detected before any network call, then
-reported **once** rather than retried every minute:
+reported **once** rather than retried every minute. The notification names the
+command to run; if you add `{blocked}` to your shell prompt (see
+[Shell Prompt Integration](#shell-prompt-integration)) the warning also stays
+visible until it is resolved, instead of passing with the notification:
 
 - **Profiles requiring an MFA code.** Covered while a cached MFA session lasts
   (see below); after that the code has to be typed again.

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,5 +81,17 @@ func TestLogWritesAndRotates(t *testing.T) {
 	// The timestamp is what makes the log usable when reading it later.
 	if !contains(data, "T") {
 		t.Errorf("log line should carry a timestamp: %q", data)
+	}
+}
+
+func TestAwsmCommandUsesThisBinaryNotThePath(t *testing.T) {
+	// A bare "awsm" would resolve through PATH, which can hold an older build
+	// than the one raising the alert; the fix would then appear not to work.
+	got := AwsmCommand("profile", "set", "work")
+	if strings.HasPrefix(got, "awsm ") {
+		t.Errorf("got %q, which relies on PATH", got)
+	}
+	if !strings.HasSuffix(got, " profile set work") {
+		t.Errorf("got %q, want it to end with the arguments", got)
 	}
 }

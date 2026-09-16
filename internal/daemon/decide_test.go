@@ -168,18 +168,27 @@ func TestReasonsReadAsSentences(t *testing.T) {
 	// like English rather than like concatenated fragments.
 	for _, s := range []Snapshot{base(KindRole, 55*time.Minute), base(KindRole, time.Minute)} {
 		reason := Decide(s).Reason
-		if strings.Contains(reason, "for in ") || strings.Contains(reason, "  ") {
+		if strings.Contains(reason, "expires ") || strings.Contains(reason, "  ") {
 			t.Errorf("malformed reason: %q", reason)
 		}
 	}
 }
 
-func TestHumanizeReadsCorrectlyOnBothSidesOfNow(t *testing.T) {
-	if got := humanize(90 * time.Second); got != "in 2m0s" {
-		t.Errorf("humanize(90s) = %q", got)
-	}
-	if got := humanize(-90 * time.Second); got != "2m0s ago" {
-		t.Errorf("humanize(-90s) = %q", got)
+func TestExpiryPhraseReadsAsEnglishOnBothSidesOfNow(t *testing.T) {
+	for _, tc := range []struct {
+		in   time.Duration
+		want string
+	}{
+		{90 * time.Second, "expire in 2m0s"},
+		{-90 * time.Second, "expired 2m0s ago"},
+		// Seven weeks reported as "1196h6m0s" was accurate and unreadable.
+		{-1196 * time.Hour, "expired 49 days ago"},
+		{5 * time.Hour, "expire in 5h00m"},
+		{30 * time.Second, "expire in 30s"},
+	} {
+		if got := expiryPhrase(tc.in); got != tc.want {
+			t.Errorf("expiryPhrase(%s) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

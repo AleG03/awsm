@@ -57,6 +57,8 @@ func Tick(opts Options) Decision {
 			}
 			Log("rotated the SSO token for %s", snapshot.Profile)
 			state.NotifiedFor = ""
+			state.Blocked = ""
+			state.BlockedProfile = ""
 
 			// Rotating the token does not invalidate credentials already
 			// issued, so renewing them now would be an STS call for nothing.
@@ -74,15 +76,17 @@ func Tick(opts Options) Decision {
 			Log("renewed credentials for %s", snapshot.Profile)
 			// A successful renewal makes any earlier warning obsolete.
 			state.NotifiedFor = ""
+			state.Blocked = ""
+			state.BlockedProfile = ""
 		}
 
 	case ActionNotifyMFA:
-		notifyOnce(&state, snapshot, "AWS credentials need MFA",
-			fmt.Sprintf("Profile %s cannot be renewed unattended. Run: awsm profile set %s",
-				snapshot.Profile, snapshot.Profile))
+		alertOnce(&state, snapshot, BlockedMFA, "AWS credentials need MFA",
+			fmt.Sprintf("Profile %s needs an MFA code. Run: %s",
+				snapshot.Profile, AwsmCommand("profile", "set", snapshot.Profile)))
 
 	case ActionUnsupported:
-		notifyOnce(&state, snapshot, "AWS credentials not renewable", decision.Reason)
+		alertOnce(&state, snapshot, BlockedOther, "AWS credentials not renewable", decision.Reason)
 	}
 
 	if err := SaveState(state); err != nil {
@@ -140,9 +144,9 @@ func refresh(s Snapshot, opts Options, state *State) error {
 			return fmt.Errorf("SSO session for %s needs a new login", s.Profile)
 		}
 		if errors.Is(err, util.ErrNonInteractive) {
-			notifyOnce(state, s, "AWS credentials need MFA",
-				fmt.Sprintf("Profile %s needs an MFA code. Run: awsm profile set %s",
-					s.Profile, s.Profile))
+			alertOnce(state, s, "AWS credentials need MFA",
+				fmt.Sprintf("Profile %s needs an MFA code.", s.Profile),
+				AwsmCommand("profile", "set", s.Profile))
 			return fmt.Errorf("profile %s needs an MFA code", s.Profile)
 		}
 		return err
@@ -175,17 +179,27 @@ func handleExpiredSSO(s Snapshot, opts Options, state *State) {
 		}
 	}
 
-	command := "awsm sso login"
+	command := "aws sso login"
 	if session != "" {
 		command = fmt.Sprintf("aws sso login --sso-session %s", session)
 	}
-	notifyOnce(state, s, "AWS SSO session expired",
+	alertOnce(state, s, BlockedSSO, "AWS SSO session expired",
 		fmt.Sprintf("Profile %s needs a new login. Run: %s", s.Profile, command))
 }
 
-// notifyOnce reports a situation the user has to resolve, and remembers it so
-// the next cycle a minute later stays quiet about the same thing.
-func notifyOnce(state *State, s Snapshot, title, message string) {
+// alertOnce reports a situation the user has to resolve, offering the command
+// that resolves it, and remembers it so the next cycle a minute later stays
+// quiet about the same thing.
+//
+// Raising this once is what makes an interrupting dialog acceptable: sixty
+// times an hour it would be the reason the daemon gets turned off.
+func alertOnce(state *State, s Snapshot, reason BlockedReason, title, message string) {
+	// Recorded every time, not just the first: the prompt has to keep showing
+	// the warning for as long as it applies, whereas the notification is sent
+	// once so it does not become sixty an hour.
+	state.Blocked = reason
+	state.BlockedProfile = s.Profile
+
 	key := NotificationKey(s.Profile, s.CredentialsExpiry)
 	if state.NotifiedFor == key {
 		return

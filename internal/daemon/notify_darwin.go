@@ -17,10 +17,18 @@ func notify(title, message string) error {
 	return exec.Command("osascript", "-e", script).Run()
 }
 
-// osaQuote renders a Go string as an AppleScript string literal. AppleScript
-// escapes with backslashes, and an unescaped quote in a profile name would turn
-// the message into a syntax error.
+// osaQuote renders a Go string as an AppleScript string literal.
+//
+// A literal newline inside an AppleScript string is a syntax error, not a line
+// break, so it has to become the two-character escape. Same for quotes, which
+// a profile name is free to contain.
 func osaQuote(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	r := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+	)
 	return `"` + r.Replace(s) + `"`
 }

@@ -24,6 +24,53 @@ type State struct {
 	// the expiry that prompted it. A new expiry is a new situation and is
 	// allowed to notify again.
 	NotifiedFor string `json:"notified_for,omitempty"`
+
+	// Blocked names what the daemon cannot do on its own, empty when nothing
+	// is wrong. The shell prompt reads it, so the reminder keeps showing where
+	// the user is about to use AWS, long after a notification has gone.
+	Blocked BlockedReason `json:"blocked,omitempty"`
+	// BlockedProfile is the profile Blocked refers to, so a prompt showing a
+	// different profile does not inherit someone else's warning.
+	BlockedProfile string `json:"blocked_profile,omitempty"`
+}
+
+// BlockedReason is why an unattended renewal cannot proceed.
+type BlockedReason string
+
+const (
+	// BlockedMFA means a code has to be typed.
+	BlockedMFA BlockedReason = "mfa"
+	// BlockedSSO means the SSO session needs a browser login.
+	BlockedSSO BlockedReason = "sso"
+	// BlockedOther covers a profile awsm cannot renew at all.
+	BlockedOther BlockedReason = "other"
+)
+
+// Short renders the reason for a shell prompt, where every character costs.
+func (b BlockedReason) Short() string {
+	switch b {
+	case BlockedMFA:
+		return "MFA"
+	case BlockedSSO:
+		return "SSO"
+	case BlockedOther:
+		return "!"
+	default:
+		return ""
+	}
+}
+
+// BlockedFor reports what is blocking the given profile, if anything.
+//
+// Reading the daemon's own state rather than recomputing keeps the prompt as
+// cheap as it promises to be, and guarantees it says the same thing the
+// notification did.
+func BlockedFor(profile string) (BlockedReason, bool) {
+	s := LoadState()
+	if s.Blocked == "" || s.BlockedProfile != profile {
+		return "", false
+	}
+	return s.Blocked, true
 }
 
 // Dir is where the daemon keeps its own files.
