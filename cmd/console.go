@@ -143,7 +143,7 @@ Make sure to set a session first with 'awsm profile set <profile-name>' or use -
 			switch resp.StatusCode {
 			case 400:
 				// Bad Request - usually means expired or invalid credentials
-				return fmt.Errorf("AWS federation service rejected the credentials (status 400)\n\nThis usually means your credentials are expired or invalid.\nPlease try:\n  awsm sso login <session-name>\n  aws sso login --sso-session <session-name>\n\nIf the problem persists, check your profile configuration with:\n  awsm profile list --detailed")
+				return fmt.Errorf("AWS federation service rejected the credentials (status 400)\n\nThis usually means your credentials are expired or invalid.\nPlease try:\n  awsm sso login <session-name>\n\nIf the problem persists, check your profile configuration with:\n  awsm profile list --detailed")
 			case 403:
 				// Forbidden - usually means insufficient permissions
 				return fmt.Errorf("AWS federation service denied access (status 403)\n\nThis usually means your credentials don't have permission to access the console.\nPlease check your IAM permissions or try a different profile.")

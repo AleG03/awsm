@@ -13,6 +13,12 @@
 // from a program that had itself started perfectly well. Resolving the tool
 // here rather than leaving it to PATH fixes that for every caller at once,
 // including launch agents already installed: there is nothing to re-run.
+//
+// That particular failure can no longer happen: the SSO login is performed in
+// process now, over the OIDC device flow, and makes no subprocess at all. What
+// is left are the tools awsm cannot replace -- session-manager-plugin behind
+// `awsm connect`, the Linux browsers, notify-send -- and they are reached
+// through here for the same reason.
 package tool
 
 import (

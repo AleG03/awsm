@@ -10,7 +10,7 @@ import (
 )
 
 // ensureCredentialsWithLogin resolves credentials for a profile, prompting for
-// MFA when needed and automatically performing an `aws sso login` if the SSO
+// MFA when needed and automatically performing an SSO login if the SSO
 // session has expired. It is the central helper used by commands that need to
 // act on resolved credentials (set, run, whoami, ...).
 //

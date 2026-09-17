@@ -88,7 +88,7 @@ func RefreshSSOToken(profileName string) error {
 	fields["accessToken"] = *out.AccessToken
 	fields["expiresAt"] = time.Now().UTC().
 		Add(time.Duration(out.ExpiresIn) * time.Second).
-		Format("2006-01-02T15:04:05Z")
+		Format(ssoCacheTimeLayout)
 	// The refresh token rotates: keeping the old one would break the next
 	// refresh and quietly end the run of browser-free renewals.
 	if out.RefreshToken != nil && *out.RefreshToken != "" {
@@ -123,12 +123,38 @@ func writeSSOTokenCache(path string, fields map[string]any) error {
 }
 
 // ssoTokenCacheFile locates the cache entry belonging to a profile's SSO
-// session, matching on the start URL the way SSOTokenExpiry does.
+// session.
+//
+// The deterministic name comes first, because that is where PerformSSOLogin
+// writes and where the AWS CLI looks: sha1 of the sso-session name. Scanning by
+// start URL stays as a fallback for caches written before sso-session blocks
+// existed, but it must not win -- once both a legacy entry and a current one
+// describe the same start URL, the scan can return the stale one and the
+// refresh would renew a token nothing reads.
 func ssoTokenCacheFile(profileName string) (string, bool) {
 	startURL := lookupSSOStartURL(profileName)
 	if startURL == "" {
 		return "", false
 	}
+	wanted := strings.TrimRight(startURL, "/")
+
+	// The deterministic name, but only once the file inside it agrees about
+	// which start URL it belongs to.
+	//
+	// Existence alone is not enough. sha1 is taken over the session's *name*,
+	// so a name reused for a different Identity Center -- renamed, repointed,
+	// or simply recreated -- lands on a file left by the previous one. Handing
+	// that back would have RefreshSSOToken renew a stale entry and write to it,
+	// while the live token sits in another file nobody looked at.
+	if session, err := GetSsoSessionForProfile(profileName); err == nil && session != "" {
+		if path, err := ssoCacheFileFor(session); err == nil {
+			if entry, ok := readSSOTokenCacheEntry(path); ok &&
+				strings.TrimRight(entry.StartURL, "/") == wanted {
+				return path, true
+			}
+		}
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false
@@ -139,18 +165,13 @@ func ssoTokenCacheFile(profileName string) (string, bool) {
 		return "", false
 	}
 
-	wanted := strings.TrimRight(startURL, "/")
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		path := filepath.Join(cacheDir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var entry ssoTokenCacheEntry
-		if err := json.Unmarshal(data, &entry); err != nil {
+		entry, ok := readSSOTokenCacheEntry(path)
+		if !ok {
 			continue
 		}
 		if strings.TrimRight(entry.StartURL, "/") == wanted {
@@ -158,6 +179,21 @@ func ssoTokenCacheFile(profileName string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// readSSOTokenCacheEntry decodes one cache file, reporting whether it could be
+// read at all. An unreadable or malformed entry is skipped rather than
+// returned: the directory is shared with other tools.
+func readSSOTokenCacheEntry(path string) (ssoTokenCacheEntry, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ssoTokenCacheEntry{}, false
+	}
+	var entry ssoTokenCacheEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return ssoTokenCacheEntry{}, false
+	}
+	return entry, true
 }
 
 func strPtr(s string) *string { return &s }

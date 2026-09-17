@@ -275,7 +275,7 @@ func findLatestSsoToken(cacheDir string) (string, error) {
 	}
 
 	if latestFile == nil || validToken == "" {
-		return "", fmt.Errorf("no valid SSO token cache file found in %s.\n\nThis could mean:\n1. No SSO login has been performed\n2. All cached tokens have expired\n3. The cache directory is empty\n\nTry running 'aws sso login --sso-session <session-name>' first", cacheDir)
+		return "", fmt.Errorf("no valid SSO token cache file found in %s.\n\nThis could mean:\n1. No SSO login has been performed\n2. All cached tokens have expired\n3. The cache directory is empty\n\nTry running 'awsm sso login <session-name>' first", cacheDir)
 	}
 
 	return validToken, nil

@@ -1,7 +1,6 @@
 package aws
 
 import (
-	"awsm/internal/tool"
 	"bufio"
 	"context"
 	"encoding/json"
@@ -341,11 +340,11 @@ func assumeRole(profileName string, pConfig *profileConfig, mfaToken string) (*t
 			if needsLogin, checkErr := checkSSOLoginNeeded(stsClientProfile); checkErr != nil {
 				// If there's an error checking SSO status, it's likely expired or has connectivity issues
 				if strings.Contains(checkErr.Error(), "certificate") || strings.Contains(checkErr.Error(), "SSL") {
-					return nil, fmt.Errorf("SSL certificate issue with SSO session for source profile '%s'. Please check your network configuration or run: aws sso login --sso-session %s", stsClientProfile, ssoSession)
+					return nil, fmt.Errorf("SSL certificate issue with SSO session for source profile '%s'. Please check your network configuration or run: awsm sso login %s", stsClientProfile, ssoSession)
 				}
-				return nil, fmt.Errorf("SSO session for source profile '%s' has expired or is invalid. Please run: aws sso login --sso-session %s", stsClientProfile, ssoSession)
+				return nil, fmt.Errorf("SSO session for source profile '%s' has expired or is invalid. Please run: awsm sso login %s", stsClientProfile, ssoSession)
 			} else if needsLogin {
-				return nil, fmt.Errorf("SSO session for source profile '%s' has expired. Please run: aws sso login --sso-session %s", stsClientProfile, ssoSession)
+				return nil, fmt.Errorf("SSO session for source profile '%s' has expired. Please run: awsm sso login %s", stsClientProfile, ssoSession)
 			}
 		}
 	}
@@ -709,24 +708,4 @@ func checkSSOLoginNeeded(profileName string) (bool, error) {
 		return true, nil
 	}
 	return false, err
-}
-
-// PerformSSOLogin runs `aws sso login` for the given SSO session.
-func PerformSSOLogin(ssoSession string) error {
-	util.InfoColor.Fprintf(os.Stderr, "SSO session expired. Attempting login for session: %s\n", util.BoldColor.Sprint(ssoSession))
-	util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
-
-	cmd := tool.Command("aws", "sso", "login", "--sso-session", ssoSession)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		// The output above comes from the AWS CLI, and a failure here is
-		// almost never about the browser: point at the CLI rather than
-		// leaving the "your browser should open" line as the last word.
-		return fmt.Errorf("aws sso login failed: %w\n\nThe error above was reported by the AWS CLI itself. To see the full detail, run:\n  aws sso login --sso-session %s --debug", err, ssoSession)
-	}
-	util.SuccessColor.Fprintln(os.Stderr, "✔ SSO login successful.")
-	return nil
 }

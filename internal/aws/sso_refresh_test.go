@@ -61,6 +61,106 @@ func TestSSOTokenCacheFileIsFoundByStartURL(t *testing.T) {
 	}
 }
 
+// writeSSOCacheAt writes a cache entry under a chosen file name, which is how a
+// test can put something at the name sha1(session) produces.
+func writeSSOCacheAt(t *testing.T, home, name string, entry map[string]any) string {
+	t.Helper()
+	dir := filepath.Join(home, ".aws", "sso", "cache")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestSSOTokenCacheFileIsFoundByTheSessionName: the deterministic name is where
+// a login writes and where the AWS CLI looks, so it must win over a scan.
+func TestSSOTokenCacheFileIsFoundByTheSessionName(t *testing.T) {
+	configPath, _ := useTempAWSFiles(t)
+	home, _ := os.UserHomeDir()
+	ssoProfileConfig(t, configPath)
+
+	deterministic, err := ssoCacheFileFor("corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := writeSSOCacheAt(t, home, filepath.Base(deterministic), map[string]any{
+		"startUrl": "https://example.awsapps.com/start/",
+		"region":   "eu-west-1",
+	})
+
+	// A second entry describing the same start URL, under a name the directory
+	// scan reaches first -- os.ReadDir sorts, and "0" precedes any hex digest.
+	//
+	// Without it this test proves nothing: one matching file is found either
+	// way, so a scan that has quietly replaced the deterministic lookup passes
+	// unnoticed. Two files are what make the preference observable, and two
+	// files are also the real situation -- a cache written before sso-session
+	// blocks existed, sitting beside the one a login writes today.
+	decoy := writeSSOCacheAt(t, home, "0-stale.json", map[string]any{
+		"startUrl": "https://example.awsapps.com/start/",
+		"region":   "eu-west-1",
+	})
+
+	got, ok := ssoTokenCacheFile("work")
+	if !ok {
+		t.Fatal("the cache entry was not found")
+	}
+	if got == decoy {
+		t.Fatal("scanned the directory instead of going straight to sha1(session name); the stale entry won")
+	}
+	if got != want {
+		t.Errorf("found %q, want the deterministic name %q", got, want)
+	}
+}
+
+// TestSSOTokenCacheFileIgnoresAnEntryForAnotherStartURL.
+//
+// sha1 is taken over the session's *name*, so a name reused for a different
+// Identity Center lands on the file the previous one left. Returning it would
+// have RefreshSSOToken renew that stale entry, and write to it, while the live
+// token sits in a file nobody opened -- a session that never renews and never
+// says why.
+func TestSSOTokenCacheFileIgnoresAnEntryForAnotherStartURL(t *testing.T) {
+	configPath, _ := useTempAWSFiles(t)
+	home, _ := os.UserHomeDir()
+	ssoProfileConfig(t, configPath)
+
+	deterministic, err := ssoCacheFileFor("corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A leftover from a different Identity Center, at exactly the name the
+	// session's own entry would have.
+	writeSSOCacheAt(t, home, filepath.Base(deterministic), map[string]any{
+		"startUrl": "https://someone-else.awsapps.com/start/",
+		"region":   "us-east-1",
+	})
+	// The live entry, under a name only a scan will reach.
+	want := writeSSOCacheAt(t, home, "legacy.json", map[string]any{
+		"startUrl": "https://example.awsapps.com/start/",
+		"region":   "eu-west-1",
+	})
+
+	got, ok := ssoTokenCacheFile("work")
+	if !ok {
+		t.Fatal("the cache entry was not found")
+	}
+	if got == deterministic {
+		t.Fatal("returned an entry belonging to a different start URL")
+	}
+	if got != want {
+		t.Errorf("found %q, want %q", got, want)
+	}
+}
+
 func TestRefreshSSOTokenRefusesATokenThatCannotBeRefreshed(t *testing.T) {
 	// A token predating refresh tokens can only be replaced by a real login,
 	// and saying so beats a failed API call the user has to decode.

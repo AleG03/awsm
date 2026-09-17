@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -154,16 +157,17 @@ func fetchExpectedChecksum(checksumsURL, assetName string) (string, error) {
 	return "", fmt.Errorf("no checksum entry found for %s", assetName)
 }
 
+// maxBinarySize bounds what is copied out of a release archive.
+//
+// A var rather than a const so the tests can lower it: io.Copy on its own is
+// happy to fill a disk, and an archive that claims to hold a gigabyte is a
+// broken download, not a new version.
+var maxBinarySize int64 = 256 << 20
+
 func installUpdate(archivePath, goos string) error {
-	// Get current executable path
 	currentExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current executable path: %w", err)
-	}
-
-	if goos == "windows" {
-		// For Windows, we'd need to handle zip extraction
-		return fmt.Errorf("Windows auto-update not yet supported. Please download manually from GitHub")
 	}
 
 	// Extract into a private temp dir (avoids a predictable shared path)
@@ -173,24 +177,163 @@ func installUpdate(archivePath, goos string) error {
 	}
 	defer os.RemoveAll(extractDir)
 
-	if err := exec.Command("tar", "-xzf", archivePath, "-C", extractDir).Run(); err != nil {
-		return fmt.Errorf("failed to extract archive: %w", err)
+	extracted, err := extractBinary(archivePath, extractDir, goos)
+	if err != nil {
+		return err
+	}
+	return replaceBinary(extracted, currentExe)
+}
+
+// extractBinary pulls the awsm executable out of a release archive.
+//
+// Done with archive/tar and archive/zip rather than by running tar(1): one less
+// external program to find, and it is what lets the Windows archive be handled
+// at all. The destination path is fixed rather than taken from the archive, so
+// an entry named ../../something has nowhere to escape to -- the protection
+// tar(1) used to provide is now this line.
+func extractBinary(archivePath, destDir, goos string) (string, error) {
+	wanted := "awsm"
+	if goos == "windows" {
+		wanted = "awsm.exe"
+	}
+	dest := filepath.Join(destDir, wanted)
+
+	var err error
+	if goos == "windows" {
+		err = extractFromZip(archivePath, wanted, dest)
+	} else {
+		err = extractFromTarGz(archivePath, wanted, dest)
+	}
+	if err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+func extractFromTarGz(archivePath, wanted, dest string) error {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open the downloaded archive: %w", err)
+	}
+	defer file.Close()
+
+	gzipped, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("the download is not a gzip archive: %w", err)
+	}
+	defer gzipped.Close()
+
+	archive := tar.NewReader(gzipped)
+	for {
+		header, err := archive.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read the archive: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(filepath.Clean(header.Name)) != wanted {
+			continue
+		}
+		return writeBinary(dest, archive)
+	}
+	return fmt.Errorf("the archive contains no %s", wanted)
+}
+
+func extractFromZip(archivePath, wanted, dest string) error {
+	archive, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("the download is not a zip archive: %w", err)
+	}
+	defer archive.Close()
+
+	for _, entry := range archive.File {
+		if entry.FileInfo().IsDir() {
+			continue
+		}
+		if filepath.Base(filepath.Clean(entry.Name)) != wanted {
+			continue
+		}
+		content, err := entry.Open()
+		if err != nil {
+			return fmt.Errorf("failed to read %s from the archive: %w", wanted, err)
+		}
+		defer content.Close()
+		return writeBinary(dest, content)
+	}
+	return fmt.Errorf("the archive contains no %s", wanted)
+}
+
+// writeBinary copies one executable out of an archive, refusing an implausible
+// size instead of writing until the disk is full.
+func writeBinary(dest string, source io.Reader) error {
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create the extracted binary: %w", err)
 	}
 
-	extractedBinary := filepath.Join(extractDir, "awsm")
+	written, err := io.Copy(out, io.LimitReader(source, maxBinarySize+1))
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(dest)
+		return fmt.Errorf("failed to extract the binary: %w", err)
+	}
+	if written > maxBinarySize {
+		_ = os.Remove(dest)
+		return fmt.Errorf("the binary in the archive is larger than %d bytes; refusing it", maxBinarySize)
+	}
+	if written == 0 {
+		_ = os.Remove(dest)
+		return fmt.Errorf("the binary in the archive is empty")
+	}
+	return nil
+}
 
-	if err := os.Chmod(extractedBinary, 0755); err != nil {
-		return fmt.Errorf("failed to make binary executable: %w", err)
+// replaceBinary puts the new executable where the running one is.
+//
+// The old binary is moved aside rather than overwritten, because Windows
+// refuses to replace a file that is executing while allowing it to be renamed.
+// Unix would accept a plain rename, but doing it the same way everywhere leaves
+// one path to reason about and buys the same thing on both: if installing the
+// new binary fails, the old one goes back, and the user is never left without
+// a working awsm.
+//
+// Note that the Windows half of this has never been run on Windows.
+func replaceBinary(extracted, currentExe string) error {
+	// Checked before anything is moved: there is no reason to open a window
+	// where the user has no awsm at all, however briefly, for an update that
+	// was never going to happen. The restore below still covers the case that
+	// remains -- a move that fails partway, on a full disk or across a mount.
+	if _, err := os.Stat(extracted); err != nil {
+		return fmt.Errorf("there is no extracted binary to install: %w", err)
 	}
 
-	// Replace current binary. os.Rename fails with EXDEV when the temp dir
-	// and install path are on different filesystems, so fall back to a copy.
-	if err := os.Rename(extractedBinary, currentExe); err != nil {
-		if err := copyFile(extractedBinary, currentExe); err != nil {
-			return fmt.Errorf("failed to replace binary: %w", err)
+	aside := currentExe + ".old"
+	_ = os.Remove(aside) // a leftover from a previous update
+
+	if err := os.Rename(currentExe, aside); err != nil {
+		return fmt.Errorf("failed to move the current binary aside: %w", err)
+	}
+
+	// os.Rename fails with EXDEV when the temp dir and the install path are on
+	// different filesystems, so fall back to a copy.
+	if err := os.Rename(extracted, currentExe); err != nil {
+		if err := copyFile(extracted, currentExe); err != nil {
+			if restoreErr := os.Rename(aside, currentExe); restoreErr != nil {
+				return fmt.Errorf("failed to install the new binary (%w), and the previous one is left at %s: %v", err, aside, restoreErr)
+			}
+			return fmt.Errorf("failed to install the new binary, the previous one is back in place: %w", err)
 		}
 	}
 
+	// Still executing from this file on Unix and still locked on Windows, so
+	// removing it is best effort; the next update clears what is left.
+	_ = os.Remove(aside)
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -8,6 +9,9 @@ import (
 	"awsm/internal/aws"
 	"awsm/internal/util"
 )
+
+// autoLoginTimeout bounds an unattended login.
+const autoLoginTimeout = 3 * time.Minute
 
 // Options configures one cycle.
 type Options struct {
@@ -167,7 +171,13 @@ func handleExpiredSSO(s Snapshot, opts Options, state *State) {
 
 	if opts.AutoLogin && session != "" {
 		Log("SSO session %s expired, starting login", session)
-		if err := aws.PerformSSOLogin(session); err != nil {
+		// Bounded, unlike the same login run by a person. The device code
+		// itself lives around ten minutes, and waiting that long for a browser
+		// nobody is looking at would hold a scheduled tick open for no reason.
+		ctx, cancel := context.WithTimeout(context.Background(), autoLoginTimeout)
+		err := aws.PerformSSOLoginContext(ctx, session)
+		cancel()
+		if err != nil {
 			Log("automatic SSO login failed: %v", err)
 		} else {
 			state.NotifiedFor = ""
@@ -175,9 +185,9 @@ func handleExpiredSSO(s Snapshot, opts Options, state *State) {
 		}
 	}
 
-	command := "aws sso login"
+	command := "awsm sso login"
 	if session != "" {
-		command = fmt.Sprintf("aws sso login --sso-session %s", session)
+		command = fmt.Sprintf("awsm sso login %s", session)
 	}
 	alertOnce(state, s, BlockedSSO, "AWS SSO session expired",
 		fmt.Sprintf("Profile %s needs a new login. Run: %s", s.Profile, command))

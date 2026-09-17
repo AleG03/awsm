@@ -5,7 +5,7 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 ## Features
 
 - **Profile Management**: Easily switch between AWS profiles with interactive selection
-- **SSO Support**: Complete AWS SSO (IAM Identity Center) integration with automatic profile generation
+- **SSO Support**: Complete AWS SSO (IAM Identity Center) integration with automatic profile generation. Signing in is done by awsm itself over the OIDC device flow, so the AWS CLI is not needed for it
 - **MFA Support**: Streamlined MFA token handling for IAM profiles
 - **Identity Inspection**: `awsm whoami` shows account, ARN, region and credentials TTL at a glance
 - **Run Commands Scoped to a Profile**: `awsm run` injects AWS credentials into a child process without polluting your shell
@@ -24,6 +24,24 @@ A powerful CLI tool to simplify working with AWS profiles, credentials, and sess
 - **Import/Export**: Backup and restore your AWS configuration
 
 ## Installation
+
+### Requirements
+
+A single binary, and nothing else for everyday use. In particular **the AWS CLI
+is not required**: awsm talks to AWS through the SDK, and signs in to SSO itself
+over the OIDC device authorization flow.
+
+Two commands do reach for something external:
+
+| | |
+|---|---|
+| `awsm connect` | the AWS CLI and [`session-manager-plugin`](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html). SSM sessions are carried by that plugin, which has no substitute |
+| `awsm console` | a browser |
+
+`awsm doctor` reports what it finds, and what it does not.
+
+Note that awsm's job is to furnish credentials *to* the AWS CLI and everything
+else that reads `~/.aws`. Not requiring it is not a reason to remove it.
 
 ### From Releases
 
@@ -109,7 +127,7 @@ access-token cache to compute the remaining lifetime.
 ### Run Commands With Profile Credentials
 
 `awsm run` resolves credentials for the chosen profile (auto-prompting MFA and
-auto-running `aws sso login` if needed) and executes the given command with
+signing in to SSO if needed) and executes the given command with
 `AWS_*` environment variables injected. The parent shell is **not** modified.
 
 ```bash
@@ -456,7 +474,7 @@ visible until it is resolved, instead of passing with the notification:
   (see below); after that the code has to be typed again.
 - **SSO sessions that can no longer be refreshed.** Ordinary SSO token expiry is
   handled silently: the daemon renews the token half an hour before it lapses,
-  using the refresh token the AWS CLI stored at login. Access tokens are
+  using the refresh token stored at login. Access tokens are
   short — an hour against one Identity Center tested here — so without this
   you are logged out roughly hourly. The browser is needed only once the
   refresh token itself stops being accepted, which the daemon recognises by the

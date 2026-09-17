@@ -192,7 +192,10 @@ func checkExternalTools() []checkResult {
 		name, bin, hint string
 		required        bool
 	}{
-		{"aws CLI", "aws", "needed for SSO login flows; install from https://aws.amazon.com/cli/", true},
+		// Not required: the SSO login runs in process now. awsm connect still
+		// hands over to it, so a missing CLI is worth reporting -- as a warning,
+		// which is what it costs.
+		{"aws CLI", "aws", "only needed by `awsm connect`; install from https://aws.amazon.com/cli/", false},
 		{"session-manager-plugin", "session-manager-plugin", "needed by `awsm connect`; see https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html", false},
 	}
 	var out []checkResult
