@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"awsm/internal/tool"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -196,7 +197,7 @@ func checkExternalTools() []checkResult {
 	}
 	var out []checkResult
 	for _, t := range tools {
-		path, err := exec.LookPath(t.bin)
+		path, err := tool.Look(t.bin)
 		if err != nil {
 			status := statusWarn
 			msg := "not found in PATH — " + t.hint

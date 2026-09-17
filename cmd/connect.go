@@ -1,10 +1,10 @@
 package cmd
 
 import (
+	"awsm/internal/tool"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 
 	"awsm/internal/aws"
@@ -142,7 +142,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	}
 
 	// Execute aws cli
-	ssmCmd := exec.Command("aws", execArgs...)
+	ssmCmd := tool.Command("aws", execArgs...)
 	ssmCmd.Stdin = os.Stdin
 	ssmCmd.Stdout = os.Stdout
 	ssmCmd.Stderr = os.Stderr

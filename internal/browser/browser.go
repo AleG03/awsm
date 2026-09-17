@@ -2,6 +2,7 @@ package browser
 
 import (
 	"awsm/internal/config"
+	"awsm/internal/tool"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -54,7 +55,7 @@ func openURLInChromeProfile(targetURL, chromeProfileAlias string) error {
 	case "windows":
 		cmd = exec.Command("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", profileArg, targetURL)
 	case "linux":
-		cmd = exec.Command("google-chrome", profileArg, targetURL)
+		cmd = tool.Command("google-chrome", profileArg, targetURL)
 	default:
 		return browser.OpenURL(targetURL)
 	}
@@ -78,7 +79,7 @@ func openURLInFirefoxContainer(targetURL, containerName string) error {
 			"--new-tab",
 			containerURL)
 	case "linux":
-		cmd = exec.Command("firefox",
+		cmd = tool.Command("firefox",
 			"--new-tab",
 			containerURL)
 	default:
@@ -109,7 +110,7 @@ func openURLInZenContainer(targetURL, containerName string) error {
 			"--new-tab",
 			containerURL)
 	case "linux":
-		cmd = exec.Command("zen",
+		cmd = tool.Command("zen",
 			"--new-tab",
 			containerURL)
 	default:

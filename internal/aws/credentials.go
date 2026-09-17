@@ -1,13 +1,13 @@
 package aws
 
 import (
+	"awsm/internal/tool"
 	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -716,7 +716,7 @@ func PerformSSOLogin(ssoSession string) error {
 	util.InfoColor.Fprintf(os.Stderr, "SSO session expired. Attempting login for session: %s\n", util.BoldColor.Sprint(ssoSession))
 	util.InfoColor.Fprintln(os.Stderr, "Your browser should open. Please follow the instructions.")
 
-	cmd := exec.Command("aws", "sso", "login", "--sso-session", ssoSession)
+	cmd := tool.Command("aws", "sso", "login", "--sso-session", ssoSession)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
