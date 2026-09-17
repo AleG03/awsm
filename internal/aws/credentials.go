@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -196,8 +197,8 @@ func getCredentials(profileName string, useCache bool, mfaToken ...string) (cred
 		}
 		sdkCreds, err := awsCfg.Credentials.Retrieve(context.TODO())
 		if err != nil {
-			if strings.Contains(err.Error(), "token has expired") || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
-				return nil, false, ErrSsoSessionExpired // Return our special error.
+			if signingInWouldFix(profileType, err) {
+				return nil, false, ErrSsoSessionExpired
 			}
 			return nil, false, err // Return the original error for other issues.
 		}
@@ -307,6 +308,38 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	}
 
 	return nil, "unknown", fmt.Errorf("could not determine type of profile '%s'", profileName)
+}
+
+// signingInWouldFix reports whether a failure to resolve credentials is one
+// that a fresh SSO login would clear.
+//
+// Two situations look different to the SDK and identical to the person in front
+// of it: a cached token that has run out, and one that was never written. The
+// second was reaching the caller as a raw
+//
+//	failed to read cached SSO token file, open ~/.aws/sso/cache/<sha1>.json:
+//	no such file or directory
+//
+// with no login offered, so a profile whose session had simply never been
+// signed in to -- a new machine, an `aws sso logout`, a cleared cache -- was a
+// dead end, while an expired one recovered by itself.
+//
+// The missing file is recognised by type rather than by message: the SDK wraps
+// the os error, so errors.Is reaches it, and a sentence this does not have to
+// guess at cannot be reworded out from under it. The three string tests are the
+// ones that were already here, kept because the messages behind them are not
+// wrapped errors that could be matched any other way.
+func signingInWouldFix(profileType string, err error) bool {
+	// Only for SSO. The same branch serves credential_process profiles, where
+	// a file that does not exist is the configured command itself, and signing
+	// in to anything would not produce it.
+	if profileType == "sso" && errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	message := err.Error()
+	return strings.Contains(message, "token has expired") ||
+		strings.Contains(message, "expired") ||
+		strings.Contains(message, "InvalidGrantException")
 }
 
 // handleIamProfile contains the logic for IAM-based profiles (MFA/role assumption).
