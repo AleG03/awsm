@@ -119,7 +119,7 @@ var daemonStatusCmd = &cobra.Command{
 		}
 
 		if profile := aws.GetCurrentProfileName(); profile != "" {
-			if expiry, ok := aws.CachedCredentialsExpiry(profile); ok {
+			if expiry, ok := aws.ActiveCredentialsExpiry(profile); ok {
 				tui.PrintKeyValue("Active profile", fmt.Sprintf("%s, credentials expire %s",
 					profile, expiry.Format(time.RFC3339)))
 			}

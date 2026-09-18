@@ -522,8 +522,93 @@ func UpdateCredentialsFile(creds *TempCredentials, region, profileName string) e
 	// Track the source profile name
 	section.Key("# source_profile").SetValue(profileName)
 
+	// And when what was just written stops working.
+	//
+	// Nothing else records it. The credentials themselves carry no expiry once
+	// they are in this file, and awsm's own cache only ever held the profiles
+	// it resolves through STS -- never the SSO ones -- so the refresh daemon
+	// had no way to tell that an SSO profile's credentials were running out and
+	// left them to lapse.
+	//
+	// A key whose name begins with '#' is the same trick as the line above:
+	// ini.v1 reads it, and the AWS CLI's parser treats the line as a comment
+	// and never sees it. Static credentials have no expiry, so the key is
+	// removed rather than written empty -- a leftover from the profile before
+	// would read as credentials that expired long ago.
+	if creds.Expires.IsZero() {
+		section.DeleteKey(defaultExpiresKey)
+	} else {
+		section.Key(defaultExpiresKey).SetValue(creds.Expires.UTC().Format(time.RFC3339))
+	}
+
 	// Save the file
 	return awsini.Save(cfg, credentialsPath)
+}
+
+// defaultExpiresKey records, in the default profile, when the credentials
+// written there stop working.
+const defaultExpiresKey = "# expires"
+
+// ActiveCredentialsExpiry reports when the credentials in use run out.
+//
+// "In use" means the ones in the default profile, which is what every tool
+// reading ~/.aws/credentials actually gets, and what the refresh daemon exists
+// to keep alive. It is only meaningful for the active profile: asked about any
+// other, it falls back to what awsm resolved for that one.
+//
+// The fallback also covers credentials written before this was recorded, so an
+// upgrade does not leave the daemon blind until the next switch.
+func ActiveCredentialsExpiry(profileName string) (time.Time, bool) {
+	if profileName == "" || profileName != GetCurrentProfileName() {
+		return CachedCredentialsExpiry(profileName)
+	}
+
+	raw := readDefaultComment(defaultExpiresKey)
+	if raw == "" {
+		return CachedCredentialsExpiry(profileName)
+	}
+	expiry, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return CachedCredentialsExpiry(profileName)
+	}
+	return expiry, true
+}
+
+// readDefaultComment reads one of the '#'-prefixed keys out of the default
+// profile, by hand.
+//
+// It has to be by hand. ini.v1 writes such a key happily and then, reading the
+// same file back, takes the line for a comment and drops it -- which is exactly
+// why the AWS CLI never sees it, and exactly why nothing can read it through
+// the parser either. GetCurrentProfileName has scanned for '# source_profile'
+// this way all along; this is the same scan, parameterised.
+func readDefaultComment(key string) string {
+	credentialsPath, err := GetAWSCredentialsPath()
+	if err != nil {
+		return ""
+	}
+	file, err := os.Open(credentialsPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	inDefault := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "[") {
+			inDefault = line == "[default]"
+			continue
+		}
+		if !inDefault || !strings.HasPrefix(line, key) {
+			continue
+		}
+		if _, value, found := strings.Cut(line, "="); found {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // GetCurrentProfileName returns the name of the profile currently set in default
@@ -674,6 +759,13 @@ func SetRegion(region string) error {
 	// Get current source profile name to preserve it
 	currentSourceProfile := GetCurrentProfileName()
 
+	// And the expiry, for the same reason. Changing a region leaves the
+	// credentials exactly as they were, so the record of when they run out has
+	// to survive too. It would not survive on its own: ini.v1 drops a
+	// '#'-prefixed key when it reads the file, so every key of that kind is
+	// lost unless the write puts it back.
+	currentExpiry := readDefaultComment(defaultExpiresKey)
+
 	// Create .aws directory if it doesn't exist
 	awsDir := filepath.Dir(credentialsPath)
 	if err := os.MkdirAll(awsDir, 0755); err != nil {
@@ -700,6 +792,9 @@ func SetRegion(region string) error {
 	// Preserve the source profile comment if it exists
 	if currentSourceProfile != "" {
 		section.Key("# source_profile").SetValue(currentSourceProfile)
+	}
+	if currentExpiry != "" {
+		section.Key(defaultExpiresKey).SetValue(currentExpiry)
 	}
 
 	// Save the file
@@ -729,6 +824,7 @@ func ClearDefaultProfile() error {
 	section.DeleteKey("aws_session_token")
 	section.DeleteKey("region")
 	section.DeleteKey("# source_profile")
+	section.DeleteKey(defaultExpiresKey)
 
 	return awsini.Save(cfg, credentialsPath)
 }

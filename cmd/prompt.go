@@ -124,7 +124,7 @@ func computeTTL(profile string, pType aws.ProfileType) (string, lipgloss.Color) 
 	}
 
 	// 1. awsm cache (set for IAM assume-role / session-token flows).
-	exp, ok := aws.CachedCredentialsExpiry(profile)
+	exp, ok := aws.ActiveCredentialsExpiry(profile)
 	// 2. AWS CLI SSO token cache (covers SSO profiles).
 	if !ok && pType == aws.ProfileTypeSSO {
 		exp, ok = aws.SSOTokenExpiry(profile)

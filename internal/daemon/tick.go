@@ -160,7 +160,10 @@ func takeSnapshot(now time.Time) Snapshot {
 		s.Kind = KindInfo(kind)
 	}
 
-	if expiry, ok := aws.CachedCredentialsExpiry(s.Profile); ok {
+	// The credentials in the default profile, not whatever awsm last resolved
+	// for this one: the default profile is what the daemon keeps alive, and for
+	// an SSO profile it is the only place the expiry is recorded at all.
+	if expiry, ok := aws.ActiveCredentialsExpiry(s.Profile); ok {
 		s.CredentialsExpiry, s.HaveCredentials = expiry, true
 	}
 
