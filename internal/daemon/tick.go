@@ -38,6 +38,9 @@ func Tick(opts Options) Decision {
 	state.LastReason = decision.Reason
 	state.LastError = ""
 
+	// Before anything is decided, drop a warning whose cause has gone away.
+	clearResolvedBlock(&state, snapshot)
+
 	switch decision.Action {
 	case ActionNone:
 		// Not logged: a quiet cycle every minute would bury the ones that
@@ -95,6 +98,48 @@ func Tick(opts Options) Decision {
 		Log("could not save state: %v", err)
 	}
 	return decision
+}
+
+// clearResolvedBlock drops a warning the situation no longer justifies.
+//
+// A block is raised when the daemon needs a person, and until now it was only
+// taken down by the daemon itself succeeding at something -- rotating a token
+// or renewing credentials. Anything a person did in between went unnoticed:
+// signing in from the panel, or from a terminal, fixed the account but left
+// "blocked" in the state file, and the panel and the shell prompt both read
+// that file rather than asking awsm. So the warning outlived what it warned
+// about, and the person who had just fixed it was told it was still broken.
+//
+// It cannot be cleared on any quiet cycle, though. ActionNone also covers a
+// profile with nothing cached to renew, which is not the same as one that is
+// well: the cause itself has to be checked, and only the cause.
+func clearResolvedBlock(state *State, s Snapshot) {
+	if state.Blocked == "" || state.BlockedProfile != s.Profile {
+		return
+	}
+
+	resolved := false
+	switch state.Blocked {
+	case BlockedSSO:
+		// A token that is present and has not run out. Its own renewal is a
+		// separate decision further down; what matters here is that no browser
+		// is needed any more.
+		resolved = s.Kind == KindSSO && s.HaveSSOToken && s.SSOTokenExpiry.After(s.Now)
+	case BlockedMFA:
+		resolved = s.MFASessionValid
+	case BlockedOther:
+		// A profile awsm cannot renew at all. That is a fact about how the
+		// profile is configured, not a situation that passes, so it stays
+		// until the configuration itself changes and a cycle reclassifies it.
+	}
+
+	if resolved {
+		was := state.Blocked
+		state.Blocked = ""
+		state.BlockedProfile = ""
+		state.NotifiedFor = ""
+		Log("cleared the %s warning for %s: it no longer applies", was, s.Profile)
+	}
 }
 
 // credentialsNearExpiry reports whether the active credentials are themselves due
