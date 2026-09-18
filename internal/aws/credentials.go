@@ -18,6 +18,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	ssotypes "github.com/aws/aws-sdk-go-v2/service/sso/types"
+	oidctypes "github.com/aws/aws-sdk-go-v2/service/ssooidc/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/aws-sdk-go-v2/service/sts/types"
 )
@@ -313,22 +315,25 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 // signingInWouldFix reports whether a failure to resolve credentials is one
 // that a fresh SSO login would clear.
 //
-// Two situations look different to the SDK and identical to the person in front
-// of it: a cached token that has run out, and one that was never written. The
-// second was reaching the caller as a raw
+// An SSO session can be unusable in several ways that look nothing alike to the
+// SDK and identical to the person in front of it, and each one that is not
+// recognised here becomes a dead end: a raw error, no login offered, and a
+// profile that cannot be entered at all. Three of them reached users that way
+// before being listed:
 //
-//	failed to read cached SSO token file, open ~/.aws/sso/cache/<sha1>.json:
-//	no such file or directory
+//   - no cached token, because the session was never signed in to, or the cache
+//     was cleared, or this is a new machine;
+//   - a token the service rejects, because the session was revoked, signed out
+//     elsewhere, or ended by the identity provider's own policy -- its recorded
+//     expiry is still in the future, so nothing about it looks expired;
+//   - a refresh token no longer accepted, which is the same policy running out
+//     between renewals.
 //
-// with no login offered, so a profile whose session had simply never been
-// signed in to -- a new machine, an `aws sso logout`, a cleared cache -- was a
-// dead end, while an expired one recovered by itself.
-//
-// The missing file is recognised by type rather than by message: the SDK wraps
-// the os error, so errors.Is reaches it, and a sentence this does not have to
-// guess at cannot be reworded out from under it. The three string tests are the
-// ones that were already here, kept because the messages behind them are not
-// wrapped errors that could be matched any other way.
+// The service errors are matched by type. errors.As reaches them through the
+// credential provider's wrapping -- verified against a real rejection -- and a
+// type cannot be reworded out from under this the way a message can. The string
+// tests below are a backstop for the failures the SDK reports as prose rather
+// than as a modelled error.
 func signingInWouldFix(profileType string, err error) bool {
 	// Only for SSO. The same branch serves credential_process profiles, where
 	// a file that does not exist is the configured command itself, and signing
@@ -336,9 +341,22 @@ func signingInWouldFix(profileType string, err error) bool {
 	if profileType == "sso" && errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
+
+	var unauthorized *ssotypes.UnauthorizedException
+	var expiredToken *oidctypes.ExpiredTokenException
+	var invalidGrant *oidctypes.InvalidGrantException
+	if errors.As(err, &unauthorized) ||
+		errors.As(err, &expiredToken) ||
+		errors.As(err, &invalidGrant) {
+		return true
+	}
+
+	// The backstop, for failures the SDK words rather than models. "expired"
+	// on its own subsumes the longer phrasings it has used, and matching the
+	// exception name covers a rejection that arrives as text rather than as
+	// the type above.
 	message := err.Error()
-	return strings.Contains(message, "token has expired") ||
-		strings.Contains(message, "expired") ||
+	return strings.Contains(message, "expired") ||
 		strings.Contains(message, "InvalidGrantException")
 }
 

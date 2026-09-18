@@ -6,6 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"testing"
+
+	ssotypes "github.com/aws/aws-sdk-go-v2/service/sso/types"
+	oidctypes "github.com/aws/aws-sdk-go-v2/service/ssooidc/types"
 )
 
 // TestSigningInWouldFixAMissingTokenCache is the bug this was written for.
@@ -90,5 +93,84 @@ func TestGetCredentialsOffersALoginWhenTheCacheIsMissing(t *testing.T) {
 	if !errors.Is(err, ErrSsoSessionExpired) {
 		t.Errorf("error = %v\nwant one carrying ErrSsoSessionExpired, which is what makes the caller sign in; "+
 			"without it the profile is a dead end and the person is shown a bare file path", err)
+	}
+}
+
+// TestEveryWayAnSsoSessionGoesBadOffersALogin is the invariant this file
+// exists to hold.
+//
+// An SSO session can become unusable in several ways that look nothing alike to
+// the SDK and identical to the person in front of it. Each one not recognised
+// is a dead end: a raw error, no login offered, a profile that cannot be
+// entered. Three separate ones reached users that way, one after another, each
+// found only when somebody hit it. This is the list, so the next one is found
+// here instead.
+//
+// The service errors are constructed rather than provoked: errors.As reaching
+// them through the credential provider's wrapping was verified against a real
+// rejection from AWS, and pinning the behaviour to the type is what keeps this
+// test honest without a network.
+func TestEveryWayAnSsoSessionGoesBadOffersALogin(t *testing.T) {
+	cases := map[string]error{
+		"never signed in, so there is no cached token": fmt.Errorf(
+			"failed to refresh cached credentials, failed to read cached SSO token file, %w",
+			&fs.PathError{Op: "open", Path: "/home/x/.aws/sso/cache/abc.json", Err: fs.ErrNotExist}),
+
+		// Revoked by an administrator, signed out from the access portal, or
+		// ended by the identity provider's own session policy. The token's
+		// recorded expiry is still in the future, so nothing about it reads as
+		// expired -- this one was a dead end until it was listed.
+		"the token is rejected by the service": fmt.Errorf(
+			"failed to refresh cached credentials, operation error SSO: GetRoleCredentials, %w",
+			&ssotypes.UnauthorizedException{Message: strPtr("Session token not found or invalid")}),
+
+		"the token has run out": fmt.Errorf("operation error SSO OIDC: CreateToken, %w",
+			&oidctypes.ExpiredTokenException{}),
+
+		"the refresh token is no longer accepted": fmt.Errorf("operation error SSO OIDC: CreateToken, %w",
+			&oidctypes.InvalidGrantException{}),
+
+		// The prose the SDK's own token provider produces, which is not a
+		// modelled error and can only be matched by its words.
+		"the cached token says it has expired": errors.New(
+			"failed to refresh cached credentials, cached SSO token has expired"),
+	}
+
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			if !signingInWouldFix("sso", err) {
+				t.Errorf("no login would be offered for: %v\n\n"+
+					"The profile cannot be entered at all, and the person is shown this error "+
+					"instead of the browser that would fix it.", err)
+			}
+		})
+	}
+}
+
+// TestALoginIsNotOfferedForWhatItWouldNotFix is the other half.
+//
+// Offering a sign-in for a failure a sign-in does not touch is its own kind of
+// wrong: it sends somebody through a browser flow, succeeds, and then fails
+// again for the original reason, which is now buried a step further back.
+func TestALoginIsNotOfferedForWhatItWouldNotFix(t *testing.T) {
+	cases := map[string]struct {
+		profileType string
+		err         error
+	}{
+		"the network is down": {"sso", errors.New(
+			"dial tcp: lookup oidc.eu-west-1.amazonaws.com: no such host")},
+		"the role refuses the caller": {"sso", errors.New(
+			"AccessDenied: User is not authorized to perform sts:AssumeRole")},
+		"the cache cannot be read": {"sso", fmt.Errorf("read: %w", fs.ErrPermission)},
+		"the credential_process command is missing": {"credential-process",
+			fmt.Errorf("exec: %w", &fs.PathError{Op: "fork/exec", Path: "/opt/get-creds", Err: fs.ErrNotExist})},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if signingInWouldFix(c.profileType, c.err) {
+				t.Errorf("a login was offered for something it cannot fix: %v", c.err)
+			}
+		})
 	}
 }
