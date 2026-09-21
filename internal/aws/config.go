@@ -486,6 +486,10 @@ type IAMRoleProfile struct {
 // Updating in place also preserves keys awsm knows nothing about, which
 // delete-then-recreate silently dropped.
 func UpdateIAMUserProfile(profileName, accessKey, secretKey, region string) error {
+	return withCredentialsLock(func() error { return updateIAMUserProfile(profileName, accessKey, secretKey, region) })
+}
+
+func updateIAMUserProfile(profileName, accessKey, secretKey, region string) error {
 	credentialsPath, err := GetAWSCredentialsPath()
 	if err != nil {
 		return err
@@ -497,7 +501,7 @@ func UpdateIAMUserProfile(profileName, accessKey, secretKey, region string) erro
 			credSection.Key("aws_access_key_id").String() != "" {
 			credSection.Key("aws_access_key_id").SetValue(accessKey)
 			credSection.Key("aws_secret_access_key").SetValue(secretKey)
-			if err := saveCredentialsWithDefaultLast(credCfg, credentialsPath); err != nil {
+			if err := saveCredentialsPreservingDefault(credCfg, credentialsPath); err != nil {
 				return err
 			}
 			if region != "" {
@@ -592,6 +596,10 @@ func UpdateIAMRoleProfile(profileName string, p IAMRoleProfile) error {
 
 // DeleteProfile removes a profile from both config and credentials files
 func DeleteProfile(profileName string) error {
+	return withCredentialsLock(func() error { return deleteProfile(profileName) })
+}
+
+func deleteProfile(profileName string) error {
 	// Delete from config file
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
@@ -634,7 +642,7 @@ func DeleteProfile(profileName string) error {
 			cfg.DeleteSection(profileName)
 			// Invalidate profile cache since profiles have changed
 			InvalidateProfileCache()
-			return saveCredentialsWithDefaultLast(cfg, credentialsPath)
+			return saveCredentialsPreservingDefault(cfg, credentialsPath)
 		}
 	}
 
@@ -763,46 +771,27 @@ func ImportProfile(profile ProfileInfo) error {
 	}
 }
 
-// saveCredentialsWithDefaultLast ensures default profile is always last
-func saveCredentialsWithDefaultLast(cfg *ini.File, credentialsPath string) error {
-	// Get current source profile to preserve it
-	currentSourceProfile := GetCurrentProfileName()
-
-	// Get default section if it exists
-	var defaultSection *ini.Section
+// saveCredentialsPreservingDefault preserves the active profile metadata on edits.
+func saveCredentialsPreservingDefault(cfg *ini.File, credentialsPath string) error {
+	// Keep the original section, including nested keys and comments.
+	// Never expose a credentials file with default removed.
 	if cfg.HasSection("default") {
-		defaultSection = cfg.Section("default")
-		// Remove it temporarily
-		cfg.DeleteSection("default")
-	}
-
-	// Save file without default
-	if err := awsini.Save(cfg, credentialsPath); err != nil {
-		return err
-	}
-
-	// Add default section back if it existed
-	if defaultSection != nil {
-		newDefault, err := cfg.NewSection("default")
-		if err != nil {
-			return err
+		section := cfg.Section("default")
+		for _, key := range []string{"# source_profile", defaultExpiresKey} {
+			if value := readDefaultComment(key); value != "" {
+				section.Key(key).SetValue(value)
+			}
 		}
-		// Copy all keys
-		for _, key := range defaultSection.Keys() {
-			newDefault.Key(key.Name()).SetValue(key.Value())
-		}
-		// Preserve the source profile comment if it existed
-		if currentSourceProfile != "" && !newDefault.HasKey("# source_profile") {
-			newDefault.Key("# source_profile").SetValue(currentSourceProfile)
-		}
-		return awsini.Save(cfg, credentialsPath)
 	}
-
-	return nil
+	return awsini.Save(cfg, credentialsPath)
 }
 
 // RestoreConfigFiles restores the AWS config and credentials files from raw content
 func RestoreConfigFiles(configContent, credentialsContent string) error {
+	return withCredentialsLock(func() error { return restoreConfigFiles(configContent, credentialsContent) })
+}
+
+func restoreConfigFiles(configContent, credentialsContent string) error {
 	// 1. Get paths
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
@@ -847,4 +836,18 @@ func RestoreConfigFiles(configContent, credentialsContent string) error {
 
 	InvalidateProfileCache()
 	return nil
+}
+
+// ChangeProfileRegionAndActive updates the named profile and its active copy.
+// Switching accounts cannot interleave between the active check and the write.
+func ChangeProfileRegionAndActive(profileName, region string) error {
+	return withCredentialsLock(func() error {
+		if err := ChangeProfileRegion(profileName, region); err != nil {
+			return err
+		}
+		if GetCurrentProfileName() == profileName {
+			return setRegion(region)
+		}
+		return nil
+	})
 }

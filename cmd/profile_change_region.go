@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var syncActiveRegion bool
+
 var profileChangeRegionCmd = &cobra.Command{
 	Use:               "change-default-region <profile> <region>",
 	Short:             "Change the default region for a profile",
@@ -22,7 +24,11 @@ var profileChangeRegionCmd = &cobra.Command{
 			return fmt.Errorf("invalid region: %s", region)
 		}
 
-		if err := aws.ChangeProfileRegion(profileName, region); err != nil {
+		change := aws.ChangeProfileRegion
+		if syncActiveRegion {
+			change = aws.ChangeProfileRegionAndActive
+		}
+		if err := change(profileName, region); err != nil {
 			return fmt.Errorf("failed to change region: %w", err)
 		}
 
@@ -32,5 +38,6 @@ var profileChangeRegionCmd = &cobra.Command{
 }
 
 func init() {
+	profileChangeRegionCmd.Flags().BoolVar(&syncActiveRegion, "sync-active", false, "Also update default credentials if this profile is active")
 	profileCmd.AddCommand(profileChangeRegionCmd)
 }

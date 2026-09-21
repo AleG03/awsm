@@ -253,6 +253,10 @@ awsm sso delete --force my-session       # Delete without confirmation
 
 # Clear all credentials from default profile
 awsm clear
+# Clear only if this profile is still active (atomic check)
+awsm clear --if-profile my-profile
+# Update the named region and, if active, its default credentials copy
+awsm profile change-default-region my-profile eu-west-1 --sync-active
 
 # Export/Import configurations
 awsm export [output-file]               # Export all profiles and SSO sessions
@@ -490,13 +494,18 @@ claim, so trust policies that require MFA are satisfied.
 This is what makes MFA profiles renewable unattended. Two consequences worth
 knowing:
 
-- `~/.awsm/cache/` now holds a credential that stays valid for up to 36 hours.
+- `~/.awsm/cache/v2/mfa/` holds a credential that stays valid for up to 36 hours.
   The file is owner-only, and `awsm profile set` re-acquires it once it lapses.
   `awsm daemon` never creates one, since obtaining it needs a code.
 - For a profile that uses `mfa_serial` without `role_arn`, `awsm whoami` will
   report a TTL of up to 36 hours where it used to say one hour. That is the
   session's real lifetime; it did not change, it was simply being re-acquired
   every hour before.
+
+Credential caches are separated by type and checked against the profile and
+its source configuration. After upgrading from the previous cache format,
+run `awsm profile set <profile>` once if prompted for MFA: old cache entries
+cannot be safely reused because they do not identify their configuration.
 
 ### Shell Completion
 

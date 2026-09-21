@@ -3,7 +3,6 @@ package aws
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"awsm/internal/awsini"
+	"awsm/internal/filelock"
 	"awsm/internal/util"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -37,48 +37,26 @@ type TempCredentials struct {
 
 // credsCachePath returns the path for a profile's cached credentials.
 func credsCachePath(profileName string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".awsm", "cache", profileName+".json"), nil
+	return credentialCachePath("roles", profileName)
 }
 
-// getCachedCreds reads cached credentials for a profile if they exist and are still valid.
 func getCachedCreds(profileName string) *TempCredentials {
 	path, err := credsCachePath(profileName)
 	if err != nil {
 		return nil
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	creds := readCredentialCache(path, profileName)
+	if creds == nil || time.Until(creds.Expires) < time.Minute {
 		return nil
 	}
-	var creds TempCredentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return nil
-	}
-	// Require at least 60 seconds remaining
-	if time.Until(creds.Expires) < 60*time.Second {
-		return nil
-	}
-	return &creds
+	return creds
 }
 
-// setCachedCreds writes credentials to the cache.
 func setCachedCreds(profileName string, creds *TempCredentials) {
 	path, err := credsCachePath(profileName)
-	if err != nil {
-		return
+	if err == nil {
+		writeCredentialCache(path, profileName, creds)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return
-	}
-	data, err := json.Marshal(creds)
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(path, data, 0600)
 }
 
 // HasValidCachedCredentials checks if valid cached credentials exist for a profile.
@@ -98,15 +76,8 @@ func CachedCredentialsExpiry(profileName string) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return time.Time{}, false
-	}
-	var creds TempCredentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return time.Time{}, false
-	}
-	if creds.Expires.IsZero() {
+	creds := readCredentialCache(path, profileName)
+	if creds == nil || creds.Expires.IsZero() {
 		return time.Time{}, false
 	}
 	return creds.Expires, true
@@ -161,6 +132,10 @@ func GetFreshCredentialsForProfile(profileName string, mfaToken ...string) (cred
 }
 
 func getCredentials(profileName string, useCache bool, mfaToken ...string) (creds *TempCredentials, isStatic bool, err error) {
+	fingerprint, err := profileFingerprint(profileName)
+	if err != nil {
+		return nil, false, err
+	}
 	pConfig, profileType, err := inspectProfile(profileName)
 	if err != nil {
 		return nil, false, err
@@ -189,7 +164,16 @@ func getCredentials(profileName string, useCache bool, mfaToken ...string) (cred
 			SessionToken:    *tempCreds.SessionToken,
 			Expires:         *tempCreds.Expiration,
 		}
-		setCachedCreds(profileName, result)
+		current, err := profileFingerprint(profileName)
+		if err != nil {
+			return nil, false, err
+		}
+		if current != fingerprint {
+			return nil, false, fmt.Errorf("profile %q changed while resolving credentials; retry the command", profileName)
+		}
+		if path, err := credsCachePath(profileName); err == nil {
+			writeCredentialCacheWithFingerprint(path, fingerprint, result)
+		}
 		return result, false, nil
 
 	case "sso", "credential-process":
@@ -238,7 +222,7 @@ func inspectProfile(profileName string) (*profileConfig, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	cfgFile, err := awsini.Load(configPath)
+	cfgFile, err := awsini.LoadOrEmpty(configPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to read AWS config file: %w", err)
 	}
@@ -501,6 +485,10 @@ func GetAWSCredentialsPath() (string, error) {
 
 // UpdateCredentialsFile updates the default profile in the AWS credentials file
 func UpdateCredentialsFile(creds *TempCredentials, region, profileName string) error {
+	return withCredentialsLock(func() error { return updateCredentialsFile(creds, region, profileName) })
+}
+
+func updateCredentialsFile(creds *TempCredentials, region, profileName string) error {
 	credentialsPath, err := GetAWSCredentialsPath()
 	if err != nil {
 		return err
@@ -683,6 +671,10 @@ func GetCurrentProfileName() string {
 
 // UpdateStaticProfile updates the default profile to use a static profile's credentials
 func UpdateStaticProfile(profileName string) error {
+	return withCredentialsLock(func() error { return updateStaticProfile(profileName) })
+}
+
+func updateStaticProfile(profileName string) error {
 	configPath, err := GetAWSConfigPath()
 	if err != nil {
 		return err
@@ -769,6 +761,10 @@ func UpdateStaticProfile(profileName string) error {
 
 // SetRegion updates the region in the default profile
 func SetRegion(region string) error {
+	return withCredentialsLock(func() error { return setRegion(region) })
+}
+
+func setRegion(region string) error {
 	credentialsPath, err := GetAWSCredentialsPath()
 	if err != nil {
 		return err
@@ -821,6 +817,10 @@ func SetRegion(region string) error {
 
 // ClearDefaultProfile removes all credentials and region from the default profile
 func ClearDefaultProfile() error {
+	return withCredentialsLock(func() error { return clearDefaultProfile() })
+}
+
+func clearDefaultProfile() error {
 	credentialsPath, err := GetAWSCredentialsPath()
 	if err != nil {
 		return err
@@ -855,4 +855,41 @@ func checkSSOLoginNeeded(profileName string) (bool, error) {
 		return true, nil
 	}
 	return false, err
+}
+
+// ErrActiveProfileChanged means a renewal lost its snapshot to another writer.
+var ErrActiveProfileChanged = errors.New("active credentials changed during renewal")
+
+func withCredentialsLock(fn func() error) error {
+	path, err := GetAWSCredentialsPath()
+	if err != nil {
+		return err
+	}
+	return filelock.With(path, fn)
+}
+
+// UpdateCredentialsFileIfCurrent commits a renewal only while its profile and
+// file revision still match. Interactive switches and clears use the same lock.
+func UpdateCredentialsFileIfCurrent(creds *TempCredentials, region, profileName, revision string) error {
+	return withCredentialsLock(func() error {
+		current, err := ActiveCredentialsRevision()
+		if err != nil {
+			return err
+		}
+		if revision == "" || current != revision || GetCurrentProfileName() != profileName {
+			return ErrActiveProfileChanged
+		}
+		return updateCredentialsFile(creds, region, profileName)
+	})
+}
+
+// ClearDefaultProfileIfCurrent compares and clears under the same lock used by
+// switches and renewals. A caller's earlier status read cannot authorize a clear.
+func ClearDefaultProfileIfCurrent(profile string) error {
+	return withCredentialsLock(func() error {
+		if profile == "" || GetCurrentProfileName() != profile {
+			return ErrActiveProfileChanged
+		}
+		return clearDefaultProfile()
+	})
 }

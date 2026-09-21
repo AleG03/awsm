@@ -76,7 +76,11 @@ func Tick(opts Options) Decision {
 				break
 			}
 		}
-		if err := refresh(snapshot, opts, &state); err != nil {
+		if err := refresh(snapshot, opts, &state); errors.Is(err, aws.ErrActiveProfileChanged) {
+			state.LastAction = "none"
+			state.LastReason = "active credentials changed; discarded renewal"
+			Log("%s", state.LastReason)
+		} else if err != nil {
 			state.LastError = err.Error()
 			Log("refresh failed: %v", err)
 		} else {
@@ -150,7 +154,8 @@ func credentialsNearExpiry(s Snapshot) bool {
 
 // takeSnapshot reads everything the decision needs, all of it from local files.
 func takeSnapshot(now time.Time) Snapshot {
-	s := Snapshot{Now: now, Profile: aws.GetCurrentProfileName(), Kind: KindUnknown}
+	revision, _ := aws.ActiveCredentialsRevision()
+	s := Snapshot{CredentialsRevision: revision, Now: now, Profile: aws.GetCurrentProfileName(), Kind: KindUnknown}
 	if s.Profile == "" {
 		return s
 	}
@@ -207,7 +212,7 @@ func refresh(s Snapshot, opts Options, state *State) error {
 	if err != nil {
 		region = ""
 	}
-	return aws.UpdateCredentialsFile(creds, region, s.Profile)
+	return aws.UpdateCredentialsFileIfCurrent(creds, region, s.Profile, s.CredentialsRevision)
 }
 
 // handleExpiredSSO deals with the one case that genuinely needs a browser.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"awsm/internal/aws"
+	"awsm/internal/awsini"
 	"awsm/internal/tui"
 	"encoding/json"
 	"fmt"
@@ -68,16 +69,11 @@ var exportCmd = &cobra.Command{
 			CredentialsFile: credentialsContent,
 		}
 
-		// Create output file
-		file, err := os.Create(outputFile)
+		data, err := json.MarshalIndent(exportData, "", "  ")
 		if err != nil {
-			return fmt.Errorf("failed to create output file: %w", err)
+			return fmt.Errorf("failed to encode export data: %w", err)
 		}
-		defer file.Close()
-
-		encoder := json.NewEncoder(file)
-		encoder.SetIndent("", "  ")
-		if err := encoder.Encode(exportData); err != nil {
+		if err := awsini.WritePrivateFile(outputFile, append(data, '\n')); err != nil {
 			return fmt.Errorf("failed to write export data: %w", err)
 		}
 

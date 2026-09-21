@@ -206,6 +206,17 @@ func writeAtomic(path string, content []byte) error {
 		mode = info.Mode().Perm()
 	}
 
+	return writeAtomicMode(path, content, mode)
+}
+
+// WritePrivateFile atomically replaces a secret file with owner-only permissions.
+// It makes no backup, so exporting secrets does not create extra secret copies.
+func WritePrivateFile(path string, content []byte) error {
+	return writeAtomicMode(path, content, 0600)
+}
+
+func writeAtomicMode(path string, content []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
 	// os.CreateTemp creates with 0600, so the content is never briefly
 	// world-readable.
 	tmp, err := os.CreateTemp(dir, ".awsm-"+filepath.Base(path)+"-*")

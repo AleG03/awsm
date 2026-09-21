@@ -70,7 +70,9 @@ type Snapshot struct {
 
 	// Profile is the active profile, empty when no profile is active.
 	Profile string
-	Kind    KindInfo
+	// CredentialsRevision identifies the file read before the renewal started.
+	CredentialsRevision string
+	Kind                KindInfo
 
 	// CredentialsExpiry is when the active credentials run out.
 	// HaveCredentials is false when nothing is cached for the profile.

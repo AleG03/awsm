@@ -2,10 +2,8 @@ package aws
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"awsm/internal/util"
@@ -31,14 +29,9 @@ const mfaSessionRenewBefore = 15 * time.Minute
 
 // mfaSessionCachePath returns the file holding a profile's MFA session.
 //
-// The name is prefixed so it cannot collide with the per-profile credential
-// cache, which lives in the same directory and holds a different thing.
+// Session tokens live in a separate namespace from assumed-role credentials.
 func mfaSessionCachePath(profileName string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not get user home directory: %w", err)
-	}
-	return filepath.Join(home, ".awsm", "cache", "mfa-session-"+profileName+".json"), nil
+	return credentialCachePath("mfa", profileName)
 }
 
 // GetCachedMFASession returns a profile's cached MFA session, or nil when there
@@ -48,18 +41,11 @@ func GetCachedMFASession(profileName string) *TempCredentials {
 	if err != nil {
 		return nil
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	creds := readCredentialCache(path, profileName)
+	if creds == nil || time.Until(creds.Expires) < mfaSessionRenewBefore {
 		return nil
 	}
-	var creds TempCredentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return nil
-	}
-	if time.Until(creds.Expires) < mfaSessionRenewBefore {
-		return nil
-	}
-	return &creds
+	return creds
 }
 
 // HasValidMFASession reports whether a role can currently be assumed without
@@ -82,18 +68,9 @@ func MFASessionExpiry(profileName string) (time.Time, bool) {
 
 func setCachedMFASession(profileName string, creds *TempCredentials) {
 	path, err := mfaSessionCachePath(profileName)
-	if err != nil {
-		return
+	if err == nil {
+		writeCredentialCache(path, profileName, creds)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return
-	}
-	data, err := json.Marshal(creds)
-	if err != nil {
-		return
-	}
-	// Longer-lived than anything else awsm caches: keep it owner-only.
-	_ = os.WriteFile(path, data, 0600)
 }
 
 // ClearMFASession removes a profile's cached MFA session.
@@ -119,6 +96,10 @@ func mfaSessionCredentials(stsProfile, mfaSerial, mfaToken string) (*TempCredent
 		return cached, nil
 	}
 
+	fingerprint, err := profileFingerprint(stsProfile)
+	if err != nil {
+		return nil, err
+	}
 	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithSharedConfigProfile(stsProfile))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config for profile '%s': %w", stsProfile, err)
@@ -148,7 +129,16 @@ func mfaSessionCredentials(stsProfile, mfaSerial, mfaToken string) (*TempCredent
 		SessionToken:    *out.Credentials.SessionToken,
 		Expires:         *out.Credentials.Expiration,
 	}
-	setCachedMFASession(stsProfile, session)
+	current, err := profileFingerprint(stsProfile)
+	if err != nil {
+		return nil, err
+	}
+	if current != fingerprint {
+		return nil, fmt.Errorf("profile %q changed while acquiring an MFA session; retry the command", stsProfile)
+	}
+	if path, err := mfaSessionCachePath(stsProfile); err == nil {
+		writeCredentialCacheWithFingerprint(path, fingerprint, session)
+	}
 	return session, nil
 }
 
