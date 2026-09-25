@@ -37,6 +37,7 @@ The format string supports the following placeholders:
   {ttl}      remaining TTL of cached credentials (e.g. "2h15m", "expired", "static")
   {account}  AWS account id (only available when present in profile config)
   {icon}     small icon based on profile type
+  {blocked_reason} raw warning reason (sso/mfa/other), empty once resolved
   {blocked}  warning when the refresh daemon needs you (e.g. " ⚠ MFA", " ⚠ SSO")
 
 Examples:
@@ -74,8 +75,10 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 
 	ttlText, ttlColor := computeTTL(profile, pType)
 
+	blocked, _ := daemon.BlockedFor(profile)
 	repl := strings.NewReplacer(
-		"{blocked}", blockedMarker(profile, promptNoColor),
+		"{blocked_reason}", string(blocked),
+		"{blocked}", formatBlockedMarker(blocked, promptNoColor),
 		"{profile}", profile,
 		"{region}", region,
 		"{type}", string(pType),
@@ -156,8 +159,12 @@ func blockedMarker(profile string, noColor bool) string {
 	if profile == "" {
 		return ""
 	}
-	reason, ok := daemon.BlockedFor(profile)
-	if !ok {
+	reason, _ := daemon.BlockedFor(profile)
+	return formatBlockedMarker(reason, noColor)
+}
+
+func formatBlockedMarker(reason daemon.BlockedReason, noColor bool) string {
+	if reason == "" {
 		return ""
 	}
 	return " " + colorize("⚠ "+reason.Short(), lipgloss.Color("#EF4444"), noColor)

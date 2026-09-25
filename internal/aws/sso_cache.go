@@ -1,13 +1,8 @@
 package aws
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
 	"awsm/internal/awsini"
+	"time"
 )
 
 // ssoTokenCacheEntry mirrors the relevant fields of the JSON files written by
@@ -22,51 +17,19 @@ type ssoTokenCacheEntry struct {
 // SSOTokenExpiry returns the expiration time of the cached SSO access token
 // associated with the given profile, if any.
 //
-// The lookup is best-effort: it scans ~/.aws/sso/cache for a JSON entry whose
-// startUrl matches the profile's sso_start_url (either set directly on the
-// profile or via its sso-session). If nothing matches, ok=false.
+// Use the same cache entry as login and token refresh. A legacy entry for the
+// same start URL must not hide the token that was just issued for this session.
 func SSOTokenExpiry(profileName string) (time.Time, bool) {
-	startURL := lookupSSOStartURL(profileName)
-	if startURL == "" {
+	path, ok := ssoTokenCacheFile(profileName)
+	if !ok {
 		return time.Time{}, false
 	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
+	entry, ok := readSSOTokenCacheEntry(path)
+	if !ok || entry.AccessToken == "" {
 		return time.Time{}, false
 	}
-	cacheDir := filepath.Join(home, ".aws", "sso", "cache")
-	entries, err := os.ReadDir(cacheDir)
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	wantedURL := strings.TrimRight(startURL, "/")
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(cacheDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		var entry ssoTokenCacheEntry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			continue
-		}
-		if strings.TrimRight(entry.StartURL, "/") != wantedURL {
-			continue
-		}
-		if entry.ExpiresAt == "" {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, entry.ExpiresAt)
-		if err != nil {
-			continue
-		}
-		return t, true
-	}
-	return time.Time{}, false
+	expiry, err := time.Parse(time.RFC3339, entry.ExpiresAt)
+	return expiry, err == nil
 }
 
 // lookupSSOStartURL resolves the SSO start URL for the given profile, either
@@ -88,7 +51,7 @@ func lookupSSOStartURL(profileName string) string {
 	if url := section.Key("sso_start_url").String(); url != "" {
 		return url
 	}
-	sessionName := section.Key("sso_session").String()
+	sessionName, _ := GetSsoSessionForProfile(profileName)
 	if sessionName == "" {
 		return ""
 	}

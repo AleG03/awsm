@@ -1,38 +1,83 @@
 package browser
 
 import (
+	"errors"
+	"net/url"
+	"os"
+	"os/exec"
+	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestOpenURL(t *testing.T) {
-	// This is mostly a wrapper around other functions, so we'll just test the basic logic
-
-	// Test with no profile/container
-	err := OpenURL("https://example.com", "", "", "")
+func TestFirefoxOnMacUsesApplicationDispatch(t *testing.T) {
+	target := "https://example.com/console?Action=login&SigninToken=a+b/c="
+	name := "production & admin/東京"
+	containerURL := buildContainerURL(name, target)
+	cmd, err := firefoxContainerCommand("darwin", containerURL)
 	if err != nil {
-		// This will actually try to open a browser, which might fail in CI
-		// So we'll just check that the function exists
-		t.Log("OpenURL with no profile returned:", err)
+		t.Fatal(err)
 	}
-
-	// Test with Chrome profile
-	err = OpenURL("https://example.com", "test-profile", "", "")
-	if err != nil {
-		// This will fail if Chrome isn't installed, which is expected
-		t.Log("OpenURL with Chrome profile returned:", err)
+	want := []string{"/usr/bin/open", "-a", "Firefox", containerURL}
+	if !reflect.DeepEqual(cmd.Args, want) {
+		t.Fatalf("command = %q, want %q", cmd.Args, want)
 	}
-
-	// Test with Firefox container
-	err = OpenURL("https://example.com", "", "test-container", "")
+	// The URL must be passed as one ordinary argument, never through a shell or
+	// --args, which would reintroduce direct Firefox command-line handling.
+	values, err := url.ParseQuery(strings.TrimPrefix(cmd.Args[3], "ext+container:"))
 	if err != nil {
-		// This will fail if Firefox isn't installed, which is expected
-		t.Log("OpenURL with Firefox container returned:", err)
+		t.Fatal(err)
 	}
+	if values.Get("name") != name || values.Get("url") != target {
+		t.Fatalf("container payload changed: %v", values)
+	}
+}
 
-	// Test with Zen container
-	err = OpenURL("https://example.com", "", "", "test-container")
+func TestFirefoxCommandsOnOtherPlatforms(t *testing.T) {
+	for _, platform := range []string{"windows", "linux"} {
+		t.Run(platform, func(t *testing.T) {
+			cmd, err := firefoxContainerCommand(platform, "ext+container:name=test&url=https%3A%2F%2Fexample.com")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cmd.Args) != 3 || cmd.Args[1] != "--new-tab" || !strings.HasPrefix(cmd.Args[2], "ext+container:") {
+				t.Fatal(cmd.Args)
+			}
+		})
+	}
+	if _, err := firefoxContainerCommand("unsupported", "ext+container:test"); err == nil {
+		t.Fatal("unsupported platform silently accepted a container request")
+	}
+}
+
+// A fake launcher exercises process exit handling without opening any browser.
+func TestFirefoxLauncherHelper(t *testing.T) {
+	if os.Getenv("AWSM_TEST_FIREFOX_LAUNCHER") != "1" {
+		return
+	}
+	os.Exit(23)
+}
+
+func TestMacDispatchFailureIsReported(t *testing.T) {
+	executable, err := os.Executable()
 	if err != nil {
-		// This will fail if Zen isn't installed, which is expected
-		t.Log("OpenURL with Zen container returned:", err)
+		t.Fatal(err)
+	}
+	cmd := exec.Command(executable, "-test.run=^TestFirefoxLauncherHelper$")
+	cmd.Env = append(os.Environ(), "AWSM_TEST_FIREFOX_LAUNCHER=1")
+	err = launchFirefoxContainer(cmd, "darwin")
+	var exited *exec.ExitError
+	if !errors.As(err, &exited) || exited.ExitCode() != 23 {
+		t.Fatalf("dispatch failure was lost: %v", err)
+	}
+	if !strings.Contains(err.Error(), "could not open Firefox container") {
+		t.Fatal(err)
+	}
+}
+
+func TestMissingFirefoxExecutableIsReported(t *testing.T) {
+	cmd := exec.Command(t.TempDir() + "/missing-firefox")
+	if err := launchFirefoxContainer(cmd, "linux"); err == nil {
+		t.Fatal("launch failure was ignored")
 	}
 }

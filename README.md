@@ -232,7 +232,7 @@ awsm doctor --json
 # Add SSO session to config and automatically generate profiles
 awsm sso add my-session https://d-123456789.awsapps.com/start/ us-east-1
 
-# Login to SSO session
+# Login and renew the active profile if it uses this session
 awsm sso login my-sso-session
 
 # Generate profiles from SSO (discovers all accounts/roles)
@@ -324,6 +324,14 @@ For Firefox, AWSM relies on the first-party **AWSM Container Opener**
 extension — published on [addons.mozilla.org](https://addons.mozilla.org/firefox/addon/awsm-container-opener/)
 and maintained in a [dedicated repository](https://github.com/AleG03/awsm-firefox-container).
 It handles the `ext+container:` protocol used by `awsm console --firefox-container`.
+
+On macOS, awsm sends the container URL through `/usr/bin/open -a Firefox`.
+This uses the normal macOS application launch path and avoids the "Profile
+Missing" error that direct execution of the Firefox bundle can cause on some
+installations. A matching macOS 27 launch failure is tracked in
+[Mozilla bug 2072342](https://bugzilla.mozilla.org/show_bug.cgi?id=2072342).
+If Firefox cannot be launched, awsm reports an error rather than opening the
+session outside its requested container.
 
 **Step 1: Install the extension**
 

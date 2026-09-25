@@ -66,30 +66,46 @@ func openURLInChromeProfile(targetURL, chromeProfileAlias string) error {
 // openURLInFirefoxContainer opens a URL in the named Firefox container via
 // the AWSM Container Opener extension.
 func openURLInFirefoxContainer(targetURL, containerName string) error {
-	var cmd *exec.Cmd
-	containerURL := buildContainerURL(containerName, targetURL)
+	cmd, err := firefoxContainerCommand(runtime.GOOS, buildContainerURL(containerName, targetURL))
+	if err != nil {
+		return err
+	}
+	return launchFirefoxContainer(cmd, runtime.GOOS)
+}
 
-	switch runtime.GOOS {
-	case "darwin": // macOS
-		cmd = exec.Command("/Applications/Firefox.app/Contents/MacOS/firefox",
-			"--new-tab",
-			containerURL)
+func firefoxContainerCommand(platform, containerURL string) (*exec.Cmd, error) {
+	switch platform {
+	case "darwin":
+		// Use macOS application dispatch, just like opening a link from another app.
+		// Launching the bundle's executable directly can fail to load the Firefox
+		// profile even while the same profile works in the normally launched app.
+		return exec.Command("/usr/bin/open", "-a", "Firefox", containerURL), nil
 	case "windows":
-		cmd = exec.Command("C:\\Program Files\\Mozilla Firefox\\firefox.exe",
-			"--new-tab",
-			containerURL)
+		return exec.Command(`C:\Program Files\Mozilla Firefox\firefox.exe`, "--new-tab", containerURL), nil
 	case "linux":
-		cmd = tool.Command("firefox",
-			"--new-tab",
-			containerURL)
+		return tool.Command("firefox", "--new-tab", containerURL), nil
 	default:
-		return browser.OpenURL(targetURL)
+		return nil, fmt.Errorf("Firefox containers are not supported on %s", platform)
 	}
+}
 
-	if err := cmd.Start(); err != nil {
-		return browser.OpenURL(targetURL)
+func launchFirefoxContainer(cmd *exec.Cmd, platform string) error {
+	var err error
+	if platform == "darwin" {
+		// open exits after handing off the URL, so wait for dispatch errors (for
+		// example Firefox not being installed), without waiting for Firefox to quit.
+		err = cmd.Run()
+	} else {
+		err = cmd.Start()
+		if err == nil {
+			go func() { _ = cmd.Wait() }()
+		}
 	}
-
+	if err != nil {
+		// A container request must not silently open an AWS session in the default
+		// browser when the requested browser could not be launched.
+		return fmt.Errorf("could not open Firefox container: %w", err)
+	}
 	return nil
 }
 

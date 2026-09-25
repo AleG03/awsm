@@ -151,9 +151,10 @@ region = eu-west-1
 	// Named as the AWS CLI names it, since that is what SSOTokenExpiry finds.
 	digest := sha1.Sum([]byte(session))
 	token := map[string]any{
-		"startUrl":  startURL,
-		"region":    "eu-west-1",
-		"expiresAt": time.Now().UTC().Add(50 * time.Minute).Format("2006-01-02T15:04:05Z"),
+		"startUrl":    startURL,
+		"accessToken": "fake-token",
+		"region":      "eu-west-1",
+		"expiresAt":   time.Now().UTC().Add(50 * time.Minute).Format("2006-01-02T15:04:05Z"),
 	}
 	encoded, err := json.Marshal(token)
 	if err != nil {
@@ -171,6 +172,13 @@ region = eu-west-1
 		NotifiedFor:    profile + "@1",
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	if blocked, ok := BlockedFor(profile); ok {
+		t.Fatalf("status still reports %s before the next daemon tick", blocked)
+	}
+	if LoadState().Blocked != BlockedSSO {
+		t.Fatal("read-only status modified daemon state")
 	}
 
 	Tick(Options{})

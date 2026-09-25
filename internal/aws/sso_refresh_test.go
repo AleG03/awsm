@@ -266,3 +266,19 @@ func TestRefreshSSOTokenDistinguishesADeadSessionFromAFailure(t *testing.T) {
 		t.Error("a raw API error must not be mistaken for a classified one")
 	}
 }
+
+func TestTokenExpiryPrefersTheSessionJustLoggedInOverLegacyCache(t *testing.T) {
+	config, _ := useTempAWSFiles(t)
+	ssoProfileConfig(t, config)
+	home, _ := os.UserHomeDir()
+	writeSSOCacheAt(t, home, "000-legacy.json", map[string]any{"startUrl": "https://example.awsapps.com/start/", "accessToken": "old", "expiresAt": "2020-01-01T00:00:00Z"})
+	path, err := ssoCacheFileFor("corp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSSOCacheAt(t, home, filepath.Base(path), map[string]any{"startUrl": "https://example.awsapps.com/start/", "accessToken": "fresh", "expiresAt": "2099-01-01T00:00:00Z"})
+	expiry, ok := SSOTokenExpiry("work")
+	if !ok || expiry.Year() != 2099 {
+		t.Fatalf("used stale legacy token: %v %v", expiry, ok)
+	}
+}

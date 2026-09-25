@@ -118,31 +118,29 @@ func Tick(opts Options) Decision {
 // profile with nothing cached to renew, which is not the same as one that is
 // well: the cause itself has to be checked, and only the cause.
 func clearResolvedBlock(state *State, s Snapshot) {
-	if state.Blocked == "" || state.BlockedProfile != s.Profile {
+	if !blockResolved(*state, s) {
 		return
 	}
+	was := state.Blocked
+	state.Blocked = ""
+	state.BlockedProfile = ""
+	state.NotifiedFor = ""
+	Log("cleared the %s warning for %s: it no longer applies", was, s.Profile)
+}
 
-	resolved := false
+// Shared by the daemon and read-only status requests. Status must not wait for
+// the next daemon tick to acknowledge a login that has already succeeded.
+func blockResolved(state State, s Snapshot) bool {
+	if state.Blocked == "" || state.BlockedProfile != s.Profile {
+		return false
+	}
 	switch state.Blocked {
 	case BlockedSSO:
-		// A token that is present and has not run out. Its own renewal is a
-		// separate decision further down; what matters here is that no browser
-		// is needed any more.
-		resolved = s.Kind == KindSSO && s.HaveSSOToken && s.SSOTokenExpiry.After(s.Now)
+		return s.HaveSSOToken && s.SSOTokenExpiry.After(s.Now)
 	case BlockedMFA:
-		resolved = s.MFASessionValid
-	case BlockedOther:
-		// A profile awsm cannot renew at all. That is a fact about how the
-		// profile is configured, not a situation that passes, so it stays
-		// until the configuration itself changes and a cycle reclassifies it.
-	}
-
-	if resolved {
-		was := state.Blocked
-		state.Blocked = ""
-		state.BlockedProfile = ""
-		state.NotifiedFor = ""
-		Log("cleared the %s warning for %s: it no longer applies", was, s.Profile)
+		return s.MFASessionValid
+	default:
+		return false
 	}
 }
 
@@ -178,7 +176,7 @@ func takeSnapshot(now time.Time) Snapshot {
 		}
 	}
 
-	if s.Kind == KindSSO {
+	if s.Kind == KindSSO || s.Kind == KindRole {
 		if expiry, ok := aws.SSOTokenExpiry(s.Profile); ok {
 			s.SSOTokenExpiry, s.HaveSSOToken = expiry, true
 		}

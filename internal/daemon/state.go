@@ -62,12 +62,12 @@ func (b BlockedReason) Short() string {
 
 // BlockedFor reports what is blocking the given profile, if anything.
 //
-// Reading the daemon's own state rather than recomputing keeps the prompt as
-// cheap as it promises to be, and guarantees it says the same thing the
-// notification did.
+// Stored warnings are rechecked against local token/session files. A successful
+// login is visible immediately, without changing the daemon's persisted state
+// or waiting for its next scheduled tick.
 func BlockedFor(profile string) (BlockedReason, bool) {
 	s := LoadState()
-	if s.Blocked == "" || s.BlockedProfile != profile {
+	if s.Blocked == "" || s.BlockedProfile != profile || blockResolved(s, takeSnapshot(time.Now())) {
 		return "", false
 	}
 	return s.Blocked, true

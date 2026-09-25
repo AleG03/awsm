@@ -3,7 +3,6 @@ name: Release Go Binary
 on:
   pull_request:
   push:
-    branches: ['**']
     tags:
       - 'v*.*.*'
 
