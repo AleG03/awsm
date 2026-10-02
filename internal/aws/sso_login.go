@@ -69,13 +69,23 @@ type oidcClient interface {
 // own logic -- the clock, the browser, the terminal, sleeping -- arrives as a
 // field so a test can supply its own and finish instantly.
 type ssoLogin struct {
-	client  oidcClient
-	session SSOSessionInfo
-	cache   string
-	out     io.Writer
-	open    func(string) error
-	sleep   func(context.Context, time.Duration) error
-	now     func() time.Time
+	client          oidcClient
+	session         SSOSessionInfo
+	cache           string
+	out             io.Writer
+	open            func(string) error
+	sleep           func(context.Context, time.Duration) error
+	now             func() time.Time
+	failOnOpenError bool
+}
+
+// SSOLoginOptions selects how the verification URL opens. A nil OpenURL uses
+// the default browser. Supply a no-op opener for a manual login.
+type SSOLoginOptions struct {
+	OpenURL func(string) error
+	// FailOnOpenError stops before polling when the requested browser cannot
+	// open. Otherwise the printed URL and code allow a manual login.
+	FailOnOpenError bool
 }
 
 // PerformSSOLogin signs in to an SSO session and caches the resulting token
@@ -89,6 +99,11 @@ func PerformSSOLogin(ssoSession string) error {
 // The daemon needs it: waiting minutes for a browser nobody is looking at is
 // reasonable for a person at a keyboard and not for a timer under launchd.
 func PerformSSOLoginContext(ctx context.Context, ssoSession string) error {
+	return PerformSSOLoginWithOptions(ctx, ssoSession, SSOLoginOptions{})
+}
+
+// PerformSSOLoginWithOptions performs a login in the caller's browser context.
+func PerformSSOLoginWithOptions(ctx context.Context, ssoSession string, opts SSOLoginOptions) error {
 	session, err := lookupSSOSession(ssoSession)
 	if err != nil {
 		return err
@@ -98,14 +113,19 @@ func PerformSSOLoginContext(ctx context.Context, ssoSession string) error {
 		return err
 	}
 
+	openURL := opts.OpenURL
+	if openURL == nil {
+		openURL = func(url string) error { return browser.OpenURL(url, "", "", "") }
+	}
 	login := &ssoLogin{
-		client:  ssooidc.New(ssooidc.Options{Region: session.Region}),
-		session: session,
-		cache:   cache,
-		out:     os.Stderr,
-		open:    func(url string) error { return browser.OpenURL(url, "", "", "") },
-		sleep:   sleepContext,
-		now:     time.Now,
+		client:          ssooidc.New(ssooidc.Options{Region: session.Region}),
+		session:         session,
+		cache:           cache,
+		out:             os.Stderr,
+		open:            openURL,
+		failOnOpenError: opts.FailOnOpenError,
+		sleep:           sleepContext,
+		now:             time.Now,
 	}
 	return login.run(ctx)
 }
@@ -192,7 +212,12 @@ func (l *ssoLogin) run(ctx context.Context) error {
 		return fmt.Errorf("could not start the SSO login for '%s': %w", l.session.Name, err)
 	}
 
-	l.prompt(authorization)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := l.prompt(authorization); err != nil {
+		return err
+	}
 
 	token, err := l.poll(ctx, clientID, clientSecret, authorization)
 	if err != nil {
@@ -251,7 +276,7 @@ func (l *ssoLogin) register(ctx context.Context) (*ssooidc.RegisterClientOutput,
 // Both, always: over SSH or on a machine with no browser the printed code is
 // the only way in, and a login that can only succeed with a desktop session is
 // a worse tool than the one this replaces.
-func (l *ssoLogin) prompt(a *ssooidc.StartDeviceAuthorizationOutput) {
+func (l *ssoLogin) prompt(a *ssooidc.StartDeviceAuthorizationOutput) error {
 	url := ""
 	if a.VerificationUriComplete != nil {
 		url = *a.VerificationUriComplete
@@ -266,10 +291,14 @@ func (l *ssoLogin) prompt(a *ssooidc.StartDeviceAuthorizationOutput) {
 	if url != "" {
 		fmt.Fprintf(l.out, "  open: %s\n", url)
 		if err := l.open(url); err != nil {
+			if l.failOnOpenError {
+				return fmt.Errorf("could not open the requested browser for SSO session '%s': %w", l.session.Name, err)
+			}
 			util.InfoColor.Fprintln(l.out, "Could not open a browser. Open the address above to continue.")
 		}
 	}
 	util.InfoColor.Fprintln(l.out, "Waiting for approval...")
+	return nil
 }
 
 // poll waits for the person to approve the request.

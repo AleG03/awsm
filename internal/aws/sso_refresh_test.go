@@ -3,11 +3,13 @@ package aws
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/ssooidc/types"
+	"github.com/aws/smithy-go"
 )
 
 func writeSSOCache(t *testing.T, home string, entry map[string]any) string {
@@ -253,17 +255,56 @@ func TestWriteSSOTokenCachePreservesEverythingElse(t *testing.T) {
 	}
 }
 
-func TestRefreshSSOTokenDistinguishesADeadSessionFromAFailure(t *testing.T) {
-	// The daemon retries transient failures every cycle but must announce a
-	// dead refresh token once, so the two have to be distinguishable.
-	err := fmt.Errorf("operation error SSO OIDC: CreateToken, InvalidGrantException: ")
-	wrapped := fmt.Errorf("%w: the refresh token for 'x' is no longer valid", ErrSsoSessionExpired)
-
-	if !errors.Is(wrapped, ErrSsoSessionExpired) {
-		t.Error("a dead refresh token must be recognisable as an expired SSO session")
-	}
-	if errors.Is(err, ErrSsoSessionExpired) {
-		t.Error("a raw API error must not be mistaken for a classified one")
+func TestRefreshSSOTokenDistinguishesARejectedSessionFromAFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		needsLogin bool
+	}{
+		{"invalid request", &types.InvalidRequestException{}, true},
+		{"invalid grant", &types.InvalidGrantException{}, true},
+		{"expired token", &types.ExpiredTokenException{}, true},
+		{"service failure", &types.InternalServerException{}, false},
+		{"network failure", errors.New("dial tcp: no such host"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, _ := useTempAWSFiles(t)
+			ssoProfileConfig(t, config)
+			home, _ := os.UserHomeDir()
+			path := writeSSOCache(t, home, map[string]any{
+				"startUrl": "https://example.awsapps.com/start/",
+				"region":   "eu-west-1", "accessToken": "old-access",
+				"clientId": "cid", "clientSecret": "secret", "refreshToken": "old-refresh",
+			})
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			apiErr := &smithy.OperationError{ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: tc.err}
+			client := &fakeOIDC{tokenReplies: []tokenReply{{err: apiErr}}}
+			err = refreshSSOToken("work", func(region string) oidcClient {
+				if region != "eu-west-1" {
+					t.Fatalf("region = %q", region)
+				}
+				return client
+			})
+			if errors.Is(err, ErrSsoSessionExpired) != tc.needsLogin {
+				t.Fatalf("error = %v, needs login = %v", err, tc.needsLogin)
+			}
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("lost the underlying API error: %v", err)
+			}
+			if len(client.tokenInputs) != 1 {
+				t.Fatalf("CreateToken calls = %d, want 1", len(client.tokenInputs))
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatal("a rejected refresh changed the cached token")
+			}
+		})
 	}
 }
 

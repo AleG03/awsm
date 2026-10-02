@@ -268,6 +268,12 @@ awsm import --force <export-file>        # Import without confirmation
 
 AWSM can open the AWS console in your browser with proper credentials. It supports both Chrome profiles and Firefox containers for better organization.
 
+If the SSO session needs a new login, authentication opens in the same browser
+profile or container selected for the console. Firefox and Zen use the AWS
+profile name as the container name for both steps. This also applies when
+opening the console from AWSM Desktop. If the selected browser cannot be opened,
+AWSM reports the error instead of switching to the default browser.
+
 #### Basic Usage
 
 ```bash
@@ -277,6 +283,12 @@ awsm console
 # Just print the URL without opening browser
 awsm console --no-open
 ```
+
+`--no-open` also suppresses browser opening during an SSO login. The login URL
+and code are printed for manual approval; after approval, AWSM prints the console
+URL. Explicit `awsm sso login` and daemon logins retain their default browser
+behavior. Browser containers isolate browser cookies; profiles using the same
+`sso_session` still share the local AWS token cache.
 
 #### Chrome Profile Integration
 
@@ -773,4 +785,4 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 - [Cobra](https://github.com/spf13/cobra)
 - [Viper](https://github.com/spf13/viper)
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-- [Lip Gloss](https://github.com/charmbracelet/lipgloss) 
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss)

@@ -1,9 +1,166 @@
 package cmd
 
 import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"awsm/internal/aws"
+	"github.com/spf13/cobra"
 )
+
+func prepareConsoleTest(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(dir, "config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
+	t.Setenv("AWS_REGION", "eu-west-1")
+	t.Setenv("AWS_PROFILE", "different-profile")
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte("[profile work & admin/東京]\nsso_session = corp\nregion = eu-west-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	aws.InvalidateProfileCache()
+	t.Cleanup(aws.InvalidateProfileCache)
+	oldProfile, oldChrome, oldFirefox, oldZen, oldNoOpen := profileName, chromeProfile, useFirefox, useZen, dontOpenBrowser
+	t.Cleanup(func() {
+		profileName, chromeProfile, useFirefox, useZen, dontOpenBrowser = oldProfile, oldChrome, oldFirefox, oldZen, oldNoOpen
+	})
+	profileName, chromeProfile, useFirefox, useZen, dontOpenBrowser = "work & admin/東京", "", false, false, false
+}
+
+func TestConsoleUsesTheSameDestinationForSSOAndConsole(t *testing.T) {
+	for _, destination := range []string{"firefox", "zen", "chrome", "default", "no-open"} {
+		for _, scenario := range []string{"expired", "valid", "open fails", "cancelled"} {
+			t.Run(destination+"/"+scenario, func(t *testing.T) {
+				prepareConsoleTest(t)
+				useFirefox, useZen = destination == "firefox", destination == "zen"
+				if destination == "chrome" {
+					chromeProfile = "work-chrome"
+				}
+				dontOpenBrowser = destination == "no-open"
+				// --no-open must win even when a container was selected.
+				if dontOpenBrowser {
+					useFirefox = true
+				}
+				wantChrome, wantFirefox, wantZen := chromeProfile, "", ""
+				if useFirefox {
+					wantFirefox = profileName
+				}
+				if useZen {
+					wantZen = profileName
+				}
+				strict := destination != "default" && destination != "no-open"
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				command := &cobra.Command{}
+				command.SetContext(ctx)
+				var stdout strings.Builder
+				command.SetOut(&stdout)
+				const ssoURL = "https://example.awsapps.com/start/#/device?user_code=ABCD-EFGH"
+				openErr := errors.New("selected browser unavailable")
+				var opened []string
+				resolutions, logins, federationCalls := 0, 0, 0
+				deps := consoleDependencies{
+					credentials: func(profile string, _ ...string) (*aws.TempCredentials, bool, error) {
+						if profile != "work & admin/東京" {
+							t.Fatalf("wrong profile: %q", profile)
+						}
+						resolutions++
+						if resolutions == 1 && scenario != "valid" {
+							return nil, false, aws.ErrSsoSessionExpired
+						}
+						return &aws.TempCredentials{AccessKeyId: "FAKE", SecretAccessKey: "fake", SessionToken: "fake", Expires: time.Now().Add(time.Hour)}, false, nil
+					},
+					ssoSession: func(profile string) (string, error) {
+						if profile != profileName {
+							t.Fatalf("wrong login profile: %q", profile)
+						}
+						return "corp", nil
+					},
+					openURL: func(target, chrome, firefox, zen string) error {
+						if chrome != wantChrome || firefox != wantFirefox || zen != wantZen {
+							t.Fatalf("destination = %q/%q/%q, want %q/%q/%q", chrome, firefox, zen, wantChrome, wantFirefox, wantZen)
+						}
+						opened = append(opened, target)
+						if scenario == "open fails" && target == ssoURL {
+							return openErr
+						}
+						return nil
+					},
+					login: func(loginCtx context.Context, session string, opts aws.SSOLoginOptions) error {
+						logins++
+						if loginCtx != ctx || session != "corp" || opts.FailOnOpenError != strict {
+							t.Fatalf("login lost context, session or opening policy")
+						}
+						if scenario == "cancelled" {
+							cancel()
+							return loginCtx.Err()
+						}
+						if err := opts.OpenURL(ssoURL); err != nil && opts.FailOnOpenError {
+							return err
+						}
+						return nil
+					},
+					postForm: func(endpoint string, form url.Values) (*http.Response, error) {
+						federationCalls++
+						if endpoint != "https://signin.aws.amazon.com/federation" || form.Get("Action") != "getSigninToken" {
+							t.Fatal("incorrect federation request")
+						}
+						return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"SigninToken":"test-token"}`))}, nil
+					},
+				}
+				err := runConsole(command, deps)
+				if scenario == "cancelled" || (scenario == "open fails" && strict) {
+					wantErr := openErr
+					if scenario == "cancelled" {
+						wantErr = context.Canceled
+					}
+					if !errors.Is(err, wantErr) {
+						t.Fatalf("error = %v, want %v", err, wantErr)
+					}
+					if resolutions != 1 || federationCalls != 0 {
+						t.Fatal("continued after failed or cancelled login")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantLogins, wantResolutions := 1, 2
+				if scenario == "valid" {
+					wantLogins, wantResolutions = 0, 1
+				}
+				if logins != wantLogins || resolutions != wantResolutions || federationCalls != 1 {
+					t.Fatalf("calls: login=%d credentials=%d federation=%d", logins, resolutions, federationCalls)
+				}
+				if dontOpenBrowser {
+					if len(opened) != 0 || !strings.Contains(stdout.String(), "SigninToken=test-token") {
+						t.Fatal("--no-open opened a browser or lost the console URL")
+					}
+					return
+				}
+				if len(opened) != 1+wantLogins {
+					t.Fatalf("opened URLs = %v", opened)
+				}
+				if wantLogins == 1 && opened[0] != ssoURL {
+					t.Fatal("SSO verification URL changed")
+				}
+				consoleURL, err := url.Parse(opened[len(opened)-1])
+				if err != nil || consoleURL.Query().Get("SigninToken") != "test-token" {
+					t.Fatalf("incorrect console URL: %v", opened)
+				}
+			})
+		}
+	}
+}
 
 func TestConsoleCommand(t *testing.T) {
 	if consoleCmd.Use != "console" {

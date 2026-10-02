@@ -57,10 +57,10 @@ func openURLInChromeProfile(targetURL, chromeProfileAlias string) error {
 	case "linux":
 		cmd = tool.Command("google-chrome", profileArg, targetURL)
 	default:
-		return browser.OpenURL(targetURL)
+		return fmt.Errorf("Chrome profiles are not supported on %s", runtime.GOOS)
 	}
 
-	return cmd.Start()
+	return launchBrowserCommand(cmd, false, "Chrome profile")
 }
 
 // openURLInFirefoxContainer opens a URL in the named Firefox container via
@@ -90,8 +90,12 @@ func firefoxContainerCommand(platform, containerURL string) (*exec.Cmd, error) {
 }
 
 func launchFirefoxContainer(cmd *exec.Cmd, platform string) error {
+	return launchBrowserCommand(cmd, platform == "darwin", "Firefox container")
+}
+
+func launchBrowserCommand(cmd *exec.Cmd, waitForDispatch bool, destination string) error {
 	var err error
-	if platform == "darwin" {
+	if waitForDispatch {
 		// open exits after handing off the URL, so wait for dispatch errors (for
 		// example Firefox not being installed), without waiting for Firefox to quit.
 		err = cmd.Run()
@@ -104,7 +108,7 @@ func launchFirefoxContainer(cmd *exec.Cmd, platform string) error {
 	if err != nil {
 		// A container request must not silently open an AWS session in the default
 		// browser when the requested browser could not be launched.
-		return fmt.Errorf("could not open Firefox container: %w", err)
+		return fmt.Errorf("could not open %s: %w", destination, err)
 	}
 	return nil
 }
@@ -113,29 +117,27 @@ func launchFirefoxContainer(cmd *exec.Cmd, platform string) error {
 // the AWSM Container Opener extension (Zen reuses the same ext+container:
 // URL scheme as Firefox).
 func openURLInZenContainer(targetURL, containerName string) error {
-	var cmd *exec.Cmd
 	containerURL := buildContainerURL(containerName, targetURL)
+	cmd, err := zenContainerCommand(runtime.GOOS, containerURL)
+	if err != nil {
+		return err
+	}
+	return launchBrowserCommand(cmd, runtime.GOOS == "darwin", "Zen container")
+}
 
-	switch runtime.GOOS {
+func zenContainerCommand(platform, containerURL string) (*exec.Cmd, error) {
+	switch platform {
 	case "darwin": // macOS
-		cmd = exec.Command("/Applications/Zen.app/Contents/MacOS/zen",
-			"--new-tab",
-			containerURL)
+		return exec.Command("/usr/bin/open", "-a", "Zen", containerURL), nil
 	case "windows":
-		cmd = exec.Command("C:\\Program Files\\Zen\\zen.exe",
+		return exec.Command("C:\\Program Files\\Zen\\zen.exe",
 			"--new-tab",
-			containerURL)
+			containerURL), nil
 	case "linux":
-		cmd = tool.Command("zen",
+		return tool.Command("zen",
 			"--new-tab",
-			containerURL)
+			containerURL), nil
 	default:
-		return browser.OpenURL(targetURL)
+		return nil, fmt.Errorf("Zen containers are not supported on %s", platform)
 	}
-
-	if err := cmd.Start(); err != nil {
-		return browser.OpenURL(targetURL)
-	}
-
-	return nil
 }

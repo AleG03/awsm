@@ -7,8 +7,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
 	ssotypes "github.com/aws/aws-sdk-go-v2/service/sso/types"
 	oidctypes "github.com/aws/aws-sdk-go-v2/service/ssooidc/types"
+	"github.com/aws/smithy-go"
 )
 
 // TestSigningInWouldFixAMissingTokenCache is the bug this was written for.
@@ -44,6 +46,28 @@ func TestSigningInWouldNotFixACredentialProcess(t *testing.T) {
 	}
 }
 
+// Exercise the SDK's refresh and wrapping with yesterday's cached token.
+func TestSigningInWouldFixSDKInvalidRefreshRequest(t *testing.T) {
+	useTempAWSFiles(t)
+	home, _ := os.UserHomeDir()
+	path := writeSSOCache(t, home, map[string]any{
+		"accessToken": "old-access", "expiresAt": "2000-01-01T00:00:00Z",
+		"clientId": "cid", "clientSecret": "secret", "refreshToken": "old-refresh",
+	})
+	rejected := &oidctypes.InvalidRequestException{}
+	client := &fakeOIDC{tokenReplies: []tokenReply{{err: &smithy.OperationError{
+		ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: rejected,
+	}}}}
+	provider := ssocreds.NewSSOTokenProvider(client, path)
+	_, err := provider.RetrieveBearerToken(t.Context())
+	if !errors.Is(err, rejected) {
+		t.Fatalf("SDK did not reach the rejected refresh: %v", err)
+	}
+	if !signingInWouldFix("sso", fmt.Errorf("failed to refresh cached credentials, %w", err)) {
+		t.Fatalf("SDK refresh rejection would not start a login: %v", err)
+	}
+}
+
 func TestSigningInWouldFix(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -54,6 +78,7 @@ func TestSigningInWouldFix(t *testing.T) {
 		{"expired token", "sso", errors.New("the security token has expired"), true},
 		{"expired, plainly", "sso", errors.New("sso session expired"), true},
 		{"refresh token rejected", "sso", errors.New("InvalidGrantException: "), true},
+		{"invalid refresh request, as reported", "sso", errors.New("failed to refresh cached credentials, refresh cached SSO token failed, unable to refresh SSO token, operation error SSO OIDC: CreateToken, https response error StatusCode: 400, RequestID: 3266f613-a47f-42fe-afed-1900a2073665, InvalidRequestException: "), true},
 		{"missing cache", "sso", fmt.Errorf("read: %w", fs.ErrNotExist), true},
 		{"missing cache, os alias", "sso", fmt.Errorf("read: %w", os.ErrNotExist), true},
 
@@ -63,6 +88,8 @@ func TestSigningInWouldFix(t *testing.T) {
 		{"permissions", "sso", errors.New("AccessDenied: not authorized to perform sts:AssumeRole"), false},
 		{"unreadable cache", "sso", fmt.Errorf("read: %w", fs.ErrPermission), false},
 		{"process missing", "credential-process", fmt.Errorf("exec: %w", fs.ErrNotExist), false},
+		{"process reports invalid request", "credential-process", errors.New("InvalidRequestException: "), false},
+		{"process reports expiry", "credential-process", errors.New("credentials expired"), false},
 	}
 
 	for _, c := range cases {
@@ -129,6 +156,9 @@ func TestEveryWayAnSsoSessionGoesBadOffersALogin(t *testing.T) {
 
 		"the refresh token is no longer accepted": fmt.Errorf("operation error SSO OIDC: CreateToken, %w",
 			&oidctypes.InvalidGrantException{}),
+
+		"AWS rejects the cached refresh request": fmt.Errorf("failed to refresh cached credentials, refresh cached SSO token failed, unable to refresh SSO token, %w",
+			&smithy.OperationError{ServiceID: "SSO OIDC", OperationName: "CreateToken", Err: &oidctypes.InvalidRequestException{}}),
 
 		// The prose the SDK's own token provider produces, which is not a
 		// modelled error and can only be matched by its words.

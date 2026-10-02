@@ -81,3 +81,37 @@ func TestMissingFirefoxExecutableIsReported(t *testing.T) {
 		t.Fatal("launch failure was ignored")
 	}
 }
+
+func TestZenCommandsPreserveTheContainerURL(t *testing.T) {
+	target := "https://example.awsapps.com/start/#/device?user_code=ABCD-EFGH&extra=a+b/c="
+	containerURL := buildContainerURL("work & admin/東京", target)
+	for _, platform := range []string{"darwin", "windows", "linux"} {
+		t.Run(platform, func(t *testing.T) {
+			cmd, err := zenContainerCommand(platform, containerURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cmd.Args[len(cmd.Args)-1] != containerURL {
+				t.Fatal("container URL changed")
+			}
+			if platform == "darwin" && !reflect.DeepEqual(cmd.Args, []string{"/usr/bin/open", "-a", "Zen", containerURL}) {
+				t.Fatal(cmd.Args)
+			}
+		})
+	}
+	if _, err := zenContainerCommand("unsupported", containerURL); err == nil {
+		t.Fatal("unsupported platform accepted a container request")
+	}
+}
+
+func TestSelectedBrowserLaunchFailureIsReported(t *testing.T) {
+	for _, destination := range []string{"Zen container", "Chrome profile"} {
+		t.Run(destination, func(t *testing.T) {
+			cmd := exec.Command(t.TempDir() + "/missing-browser")
+			err := launchBrowserCommand(cmd, false, destination)
+			if err == nil || !strings.Contains(err.Error(), destination) {
+				t.Fatalf("requested browser failure lost: %v", err)
+			}
+		})
+	}
+}

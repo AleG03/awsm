@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -405,6 +406,64 @@ func TestLoginShowsTheCodeWhenNoBrowserOpens(t *testing.T) {
 	}
 	if !strings.Contains(printed.String(), "https://example.awsapps.com/start/#/device") {
 		t.Errorf("output did not show the verification URL:\n%s", printed.String())
+	}
+}
+
+func TestLoginStopsBeforePollingWhenTheRequestedBrowserCannotOpen(t *testing.T) {
+	fake := &fakeOIDC{}
+	login, slept := newLogin(t, fake, tokenReply{out: granted()})
+	var printed strings.Builder
+	login.out = &printed
+	login.failOnOpenError = true
+	openErr := errors.New("Firefox container unavailable")
+	var opened []string
+	login.open = func(url string) error {
+		opened = append(opened, url)
+		return openErr
+	}
+	err := login.run(t.Context())
+	if !errors.Is(err, openErr) {
+		t.Fatalf("lost browser error: %v", err)
+	}
+	if len(opened) != 1 || opened[0] != *fake.authOut.VerificationUriComplete {
+		t.Fatalf("verification URL = %v", opened)
+	}
+	if len(*slept) != 0 || len(fake.tokenInputs) != 0 || strings.Contains(printed.String(), "Waiting for approval") {
+		t.Fatal("waited or polled after the browser failed to open")
+	}
+	if _, err := os.Stat(login.cache); !os.IsNotExist(err) {
+		t.Fatalf("failed login wrote the cache: %v", err)
+	}
+}
+
+func TestManualLoginPrintsTheCodeAndURL(t *testing.T) {
+	fake := &fakeOIDC{}
+	login, _ := newLogin(t, fake, tokenReply{out: granted()})
+	var printed strings.Builder
+	login.out = &printed
+	// This is the opener supplied by console --no-open.
+	login.open = func(string) error { return nil }
+	if err := login.run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(printed.String(), *fake.authOut.UserCode) ||
+		!strings.Contains(printed.String(), *fake.authOut.VerificationUriComplete) {
+		t.Fatalf("manual login instructions missing: %s", printed.String())
+	}
+}
+
+func TestLoginCancellationStopsPolling(t *testing.T) {
+	fake := &fakeOIDC{}
+	login, _ := newLogin(t, fake, tokenReply{out: granted()})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	login.open = func(string) error { cancel(); return nil }
+	login.sleep = sleepContext
+	if err := login.run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want cancelled login", err)
+	}
+	if len(fake.tokenInputs) != 0 {
+		t.Fatal("polled after cancellation")
 	}
 }
 

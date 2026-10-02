@@ -19,7 +19,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	ssotypes "github.com/aws/aws-sdk-go-v2/service/sso/types"
-	oidctypes "github.com/aws/aws-sdk-go-v2/service/ssooidc/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/aws-sdk-go-v2/service/sts/types"
 )
@@ -322,26 +321,23 @@ func signingInWouldFix(profileType string, err error) bool {
 	// Only for SSO. The same branch serves credential_process profiles, where
 	// a file that does not exist is the configured command itself, and signing
 	// in to anything would not produce it.
-	if profileType == "sso" && errors.Is(err, fs.ErrNotExist) {
+	if profileType != "sso" {
+		return false
+	}
+	if errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
 
 	var unauthorized *ssotypes.UnauthorizedException
-	var expiredToken *oidctypes.ExpiredTokenException
-	var invalidGrant *oidctypes.InvalidGrantException
 	if errors.As(err, &unauthorized) ||
-		errors.As(err, &expiredToken) ||
-		errors.As(err, &invalidGrant) {
+		ssoRefreshNeedsLogin(err) {
 		return true
 	}
 
-	// The backstop, for failures the SDK words rather than models. "expired"
-	// on its own subsumes the longer phrasings it has used, and matching the
-	// exception name covers a rejection that arrives as text rather than as
-	// the type above.
+	// The backstop for expiry failures the SDK reports as prose rather than
+	// as a modelled error. Refresh rejection names are handled above.
 	message := err.Error()
-	return strings.Contains(message, "expired") ||
-		strings.Contains(message, "InvalidGrantException")
+	return strings.Contains(message, "expired")
 }
 
 // handleIamProfile contains the logic for IAM-based profiles (MFA/role assumption).

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,8 @@ a Firefox Multi-Account Container, or a Zen Browser container.
 
 The command generates a console URL using your current AWS credentials.
 Make sure your credentials are valid before running this command.
+If an SSO login is needed, it opens in the same browser profile or container
+as the console. --no-open prints the SSO URL and code for manual login.
 
 By default, opens in the default browser.
 Use --chrome-profile to open in a specific Chrome profile.
@@ -44,169 +47,205 @@ Use --zen-container to open in a Zen Browser container matching your AWS profile
 Make sure to set a session first with 'awsm profile set <profile-name>' or use --profile flag to specify a profile.`,
 	Aliases: []string{"c", "open"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get profile to use - either from --profile flag or current profile
-		var currentProfile string
-		if profileName != "" {
-			currentProfile = profileName
-		} else {
-			currentProfile = os.Getenv("AWS_PROFILE")
-			if currentProfile == "" {
-				currentProfile = aws.GetCurrentProfileName()
-			}
-			if currentProfile == "" {
-				return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first or use --profile flag")
-			}
-		}
-
-		// Check if profile needs MFA and prompt before any SDK call
-		// Skip if we have valid cached credentials
-		var mfaToken string
-		if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(currentProfile); mfaErr == nil && needsMFA && !aws.HasValidCachedCredentials(currentProfile) {
-			mfaToken, _ = tui.PromptInput(fmt.Sprintf("MFA token for %s", tui.FormatBold(mfaSerial)))
-		}
-
-		// Retrieve credentials using internal helper to ensure freshness for chained profiles
-		tempCreds, isStatic, err := aws.GetCredentialsForProfile(currentProfile, mfaToken)
-		if err != nil {
-			// Check if this is a credential expiration error
-			if errors.Is(err, aws.ErrSsoSessionExpired) || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
-				// Try to refresh the session
-				tui.PrintWarning("Credentials expired. Attempting to refresh session...")
-
-				// Get SSO session name for the current profile
-				ssoSession, err := aws.GetSsoSessionForProfile(currentProfile)
-				if err != nil {
-					return fmt.Errorf("failed to get SSO session for profile '%s': %w", currentProfile, err)
-				}
-
-				// Trigger SSO login
-				if err := aws.PerformSSOLogin(ssoSession); err != nil {
-					return fmt.Errorf("failed to refresh session: %w", err)
-				}
-
-				// Retry retrieving credentials
-				tempCreds, isStatic, err = aws.GetCredentialsForProfile(currentProfile)
-				if err != nil {
-					return fmt.Errorf("failed to retrieve credentials after refresh: %w", err)
-				}
-			} else {
-				return fmt.Errorf("failed to retrieve credentials for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
-			}
-		}
-
-		if tempCreds.AccessKeyId == "" || tempCreds.SecretAccessKey == "" {
-			return fmt.Errorf("invalid credentials found for profile '%s'. Please run:\n  awsm sso login <session-name>\n  awsm profile set <profile-name>", currentProfile)
-		}
-		sessionJSON, err := json.Marshal(map[string]string{"sessionId": tempCreds.AccessKeyId, "sessionKey": tempCreds.SecretAccessKey, "sessionToken": tempCreds.SessionToken})
-		if err != nil {
-			return fmt.Errorf("failed to create session JSON: %w", err)
-		}
-
-		// Use POST to avoid URL length issues with long session tokens
-		formData := url.Values{}
-		formData.Set("Action", "getSigninToken")
-		formData.Set("Session", string(sessionJSON))
-		// Determine session duration
-		if isStatic {
-			formData.Set("SessionDuration", "43200") // 12 hours for standard profiles
-		} else if !tempCreds.Expires.IsZero() {
-			// For temporary credentials, set duration to remaining time (capped at 12 hours)
-			remaining := int(time.Until(tempCreds.Expires).Seconds())
-			if remaining > 0 {
-				duration := remaining
-				if duration > 43200 {
-					duration = 43200
-				}
-				// Use a small buffer to avoid 400 errors from clock skew
-				if duration > 60 {
-					duration -= 60
-				}
-				if duration >= 900 {
-					formData.Set("SessionDuration", fmt.Sprintf("%d", duration))
-				}
-			}
-		}
-
-		resp, err := http.PostForm("https://signin.aws.amazon.com/federation", formData)
-		if err != nil {
-			return fmt.Errorf("failed to get sign-in token: %w", err)
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-
-		if resp.StatusCode != 200 {
-			// Handle specific error cases
-			switch resp.StatusCode {
-			case 400:
-				// Bad Request - usually means expired or invalid credentials
-				return fmt.Errorf("AWS federation service rejected the credentials (status 400)\n\nThis usually means your credentials are expired or invalid.\nPlease try:\n  awsm sso login <session-name>\n\nIf the problem persists, check your profile configuration with:\n  awsm profile list --detailed")
-			case 403:
-				// Forbidden - usually means insufficient permissions
-				return fmt.Errorf("AWS federation service denied access (status 403)\n\nThis usually means your credentials don't have permission to access the console.\nPlease check your IAM permissions or try a different profile.")
-			case 500, 502, 503, 504:
-				// Server errors - AWS service issues
-				return fmt.Errorf("AWS federation service is experiencing issues (status %d)\n\nPlease try again in a few minutes. If the problem persists, check AWS service status.", resp.StatusCode)
-			default:
-				// Other errors - show the full response for debugging
-				if len(body) > 1000 {
-					// Truncate very long responses (like HTML error pages)
-					return fmt.Errorf("federation service returned status %d\n\nResponse (truncated): %s...\n\nPlease try refreshing your credentials:\n  awsm sso login <session-name>", resp.StatusCode, string(body[:1000]))
-				}
-				return fmt.Errorf("federation service returned status %d: %s\n\nPlease try refreshing your credentials:\n  awsm sso login <session-name>", resp.StatusCode, string(body))
-			}
-		}
-		var tokenResp struct {
-			SigninToken string `json:"SigninToken"`
-		}
-		if err := json.Unmarshal(body, &tokenResp); err != nil {
-			return fmt.Errorf("failed to parse sign-in token response: %w. Response was: %s", err, string(body))
-		}
-		if tokenResp.SigninToken == "" {
-			return fmt.Errorf("sign-in token not found in response. Response was: %s", string(body))
-		}
-		region := os.Getenv("AWS_REGION")
-		if region == "" {
-			region, _ = aws.GetProfileRegion(currentProfile)
-		}
-		if region == "" {
-			region = "us-east-1"
-			tui.PrintWarning("No region found, defaulting to us-east-1")
-		}
-		destination := fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
-		loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
-
-		if dontOpenBrowser {
-			fmt.Println(loginURL)
-		} else {
-			// If --firefox-container is used, use the profile we determined earlier
-			var firefoxContainer string
-			if useFirefox {
-				firefoxContainer = currentProfile
-			}
-
-			// If --zen-container is used, use the profile we determined earlier
-			var zenContainer string
-			if useZen {
-				zenContainer = currentProfile
-			}
-
-			if err := browser.OpenURL(loginURL, chromeProfile, firefoxContainer, zenContainer); err != nil {
-				fmt.Fprintln(os.Stderr, "Could not open browser automatically. Please copy this URL:")
-				fmt.Println(loginURL)
-				return fmt.Errorf("could not open browser: %w", err)
-			}
-		}
-
-		return nil
+		return runConsole(cmd, consoleDependencies{
+			credentials: aws.GetCredentialsForProfile,
+			ssoSession:  aws.GetSsoSessionForProfile,
+			login:       aws.PerformSSOLoginWithOptions,
+			openURL:     browser.OpenURL,
+			postForm:    http.PostForm,
+		})
 	},
 }
 
+// Keep external effects injectable so the complete expired-session flow can be
+// verified without signing in or opening a real browser.
+type consoleDependencies struct {
+	credentials func(string, ...string) (*aws.TempCredentials, bool, error)
+	ssoSession  func(string) (string, error)
+	login       func(context.Context, string, aws.SSOLoginOptions) error
+	openURL     func(string, string, string, string) error
+	postForm    func(string, url.Values) (*http.Response, error)
+}
+
+func runConsole(cmd *cobra.Command, deps consoleDependencies) error {
+	if err := cmd.Context().Err(); err != nil {
+		return err
+	}
+	// Get profile to use - either from --profile flag or current profile
+	var currentProfile string
+	if profileName != "" {
+		currentProfile = profileName
+	} else {
+		currentProfile = os.Getenv("AWS_PROFILE")
+		if currentProfile == "" {
+			currentProfile = aws.GetCurrentProfileName()
+		}
+		if currentProfile == "" {
+			return fmt.Errorf("no AWS profile set. Please run 'awsm profile set <profile-name>' first or use --profile flag")
+		}
+	}
+
+	// Capture the chosen destination before resolving credentials: a login
+	// must use exactly the same destination as the console that follows it.
+	selectedChrome := chromeProfile
+	var firefoxContainer, zenContainer string
+	if useFirefox {
+		firefoxContainer = currentProfile
+	}
+	if useZen {
+		zenContainer = currentProfile
+	}
+	noOpen := dontOpenBrowser
+	openURL := func(target string) error {
+		if noOpen {
+			return nil
+		}
+		return deps.openURL(target, selectedChrome, firefoxContainer, zenContainer)
+	}
+	loginOptions := aws.SSOLoginOptions{
+		OpenURL:         openURL,
+		FailOnOpenError: !noOpen && (selectedChrome != "" || firefoxContainer != "" || zenContainer != ""),
+	}
+
+	// Check if profile needs MFA and prompt before any SDK call
+	// Skip if we have valid cached credentials
+	var mfaToken string
+	if needsMFA, mfaSerial, mfaErr := aws.ProfileNeedsMFA(currentProfile); mfaErr == nil && needsMFA && !aws.HasValidCachedCredentials(currentProfile) {
+		mfaToken, _ = tui.PromptInput(fmt.Sprintf("MFA token for %s", tui.FormatBold(mfaSerial)))
+	}
+
+	// Retrieve credentials using internal helper to ensure freshness for chained profiles
+	tempCreds, isStatic, err := deps.credentials(currentProfile, mfaToken)
+	if err != nil {
+		// Check if this is a credential expiration error
+		if errors.Is(err, aws.ErrSsoSessionExpired) || strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "InvalidGrantException") {
+			// Try to refresh the session
+			tui.PrintWarning("Credentials expired. Attempting to refresh session...")
+
+			// Get SSO session name for the current profile
+			ssoSession, err := deps.ssoSession(currentProfile)
+			if err != nil {
+				return fmt.Errorf("failed to get SSO session for profile '%s': %w", currentProfile, err)
+			}
+
+			// Trigger SSO login
+			if err := deps.login(cmd.Context(), ssoSession, loginOptions); err != nil {
+				return fmt.Errorf("failed to refresh session: %w", err)
+			}
+			if err := cmd.Context().Err(); err != nil {
+				return err
+			}
+
+			// Retry retrieving credentials
+			tempCreds, isStatic, err = deps.credentials(currentProfile)
+			if err != nil {
+				return fmt.Errorf("failed to retrieve credentials after refresh: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to retrieve credentials for profile '%s': %w\n\nPlease check your profile configuration with:\n  awsm profile list --detailed", currentProfile, err)
+		}
+	}
+
+	if tempCreds == nil || tempCreds.AccessKeyId == "" || tempCreds.SecretAccessKey == "" {
+		return fmt.Errorf("invalid credentials found for profile '%s'. Please run:\n  awsm sso login <session-name>\n  awsm profile set <profile-name>", currentProfile)
+	}
+	sessionJSON, err := json.Marshal(map[string]string{"sessionId": tempCreds.AccessKeyId, "sessionKey": tempCreds.SecretAccessKey, "sessionToken": tempCreds.SessionToken})
+	if err != nil {
+		return fmt.Errorf("failed to create session JSON: %w", err)
+	}
+
+	// Use POST to avoid URL length issues with long session tokens
+	formData := url.Values{}
+	formData.Set("Action", "getSigninToken")
+	formData.Set("Session", string(sessionJSON))
+	// Determine session duration
+	if isStatic {
+		formData.Set("SessionDuration", "43200") // 12 hours for standard profiles
+	} else if !tempCreds.Expires.IsZero() {
+		// For temporary credentials, set duration to remaining time (capped at 12 hours)
+		remaining := int(time.Until(tempCreds.Expires).Seconds())
+		if remaining > 0 {
+			duration := remaining
+			if duration > 43200 {
+				duration = 43200
+			}
+			// Use a small buffer to avoid 400 errors from clock skew
+			if duration > 60 {
+				duration -= 60
+			}
+			if duration >= 900 {
+				formData.Set("SessionDuration", fmt.Sprintf("%d", duration))
+			}
+		}
+	}
+
+	resp, err := deps.postForm("https://signin.aws.amazon.com/federation", formData)
+	if err != nil {
+		return fmt.Errorf("failed to get sign-in token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != 200 {
+		// Handle specific error cases
+		switch resp.StatusCode {
+		case 400:
+			// Bad Request - usually means expired or invalid credentials
+			return fmt.Errorf("AWS federation service rejected the credentials (status 400)\n\nThis usually means your credentials are expired or invalid.\nPlease try:\n  awsm sso login <session-name>\n\nIf the problem persists, check your profile configuration with:\n  awsm profile list --detailed")
+		case 403:
+			// Forbidden - usually means insufficient permissions
+			return fmt.Errorf("AWS federation service denied access (status 403)\n\nThis usually means your credentials don't have permission to access the console.\nPlease check your IAM permissions or try a different profile.")
+		case 500, 502, 503, 504:
+			// Server errors - AWS service issues
+			return fmt.Errorf("AWS federation service is experiencing issues (status %d)\n\nPlease try again in a few minutes. If the problem persists, check AWS service status.", resp.StatusCode)
+		default:
+			// Other errors - show the full response for debugging
+			if len(body) > 1000 {
+				// Truncate very long responses (like HTML error pages)
+				return fmt.Errorf("federation service returned status %d\n\nResponse (truncated): %s...\n\nPlease try refreshing your credentials:\n  awsm sso login <session-name>", resp.StatusCode, string(body[:1000]))
+			}
+			return fmt.Errorf("federation service returned status %d: %s\n\nPlease try refreshing your credentials:\n  awsm sso login <session-name>", resp.StatusCode, string(body))
+		}
+	}
+	var tokenResp struct {
+		SigninToken string `json:"SigninToken"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return fmt.Errorf("failed to parse sign-in token response: %w. Response was: %s", err, string(body))
+	}
+	if tokenResp.SigninToken == "" {
+		return fmt.Errorf("sign-in token not found in response. Response was: %s", string(body))
+	}
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region, _ = aws.GetProfileRegion(currentProfile)
+	}
+	if region == "" {
+		region = "us-east-1"
+		tui.PrintWarning("No region found, defaulting to us-east-1")
+	}
+	destination := fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
+	loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
+
+	if noOpen {
+		fmt.Fprintln(cmd.OutOrStdout(), loginURL)
+	} else {
+		if err := openURL(loginURL); err != nil {
+			fmt.Fprintln(os.Stderr, "Could not open browser automatically. Please copy this URL:")
+			fmt.Fprintln(cmd.OutOrStdout(), loginURL)
+			return fmt.Errorf("could not open browser: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func init() {
-	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Don't open the browser, just print the URL")
+	consoleCmd.Flags().BoolVarP(&dontOpenBrowser, "no-open", "n", false, "Print the console URL and any SSO login URL/code without opening a browser")
 	consoleCmd.Flags().BoolVarP(&useFirefox, "firefox-container", "f", false, "Open in Firefox using a container named after the AWS profile")
 	consoleCmd.Flags().BoolVarP(&useZen, "zen-container", "z", false, "Open in Zen Browser using a container named after the AWS profile")
 	consoleCmd.Flags().StringVarP(&chromeProfile, "chrome-profile", "c", "", "Specify a Chrome profile alias or directory name (e.g., 'work')")

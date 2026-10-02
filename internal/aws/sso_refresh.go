@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
+	"github.com/aws/aws-sdk-go-v2/service/ssooidc/types"
 )
 
 // RefreshSSOToken exchanges the cached refresh token for a new access token.
@@ -34,6 +36,12 @@ import (
 // CreateToken is an unauthenticated operation, so no AWS credentials are
 // involved in making this call.
 func RefreshSSOToken(profileName string) error {
+	return refreshSSOToken(profileName, func(region string) oidcClient {
+		return ssooidc.New(ssooidc.Options{Region: region})
+	})
+}
+
+func refreshSSOToken(profileName string, newClient func(string) oidcClient) error {
 	path, ok := ssoTokenCacheFile(profileName)
 	if !ok {
 		return fmt.Errorf("no cached SSO token found for profile '%s'", profileName)
@@ -64,7 +72,7 @@ func RefreshSSOToken(profileName string) error {
 		return fmt.Errorf("the cached SSO token for '%s' has no region", profileName)
 	}
 
-	client := ssooidc.New(ssooidc.Options{Region: region})
+	client := newClient(region)
 	out, err := client.CreateToken(context.TODO(), &ssooidc.CreateTokenInput{
 		ClientId:     &clientID,
 		ClientSecret: &clientSecret,
@@ -72,12 +80,8 @@ func RefreshSSOToken(profileName string) error {
 		RefreshToken: &refreshToken,
 	})
 	if err != nil {
-		// InvalidGrantException means the refresh token itself is no longer
-		// accepted, which is what the IdP's session policy running out looks
-		// like. That needs a browser and must not be retried every cycle,
-		// unlike a network failure.
-		if strings.Contains(err.Error(), "InvalidGrantException") {
-			return fmt.Errorf("%w: the refresh token for '%s' is no longer valid", ErrSsoSessionExpired, profileName)
+		if ssoRefreshNeedsLogin(err) {
+			return fmt.Errorf("%w: could not refresh the SSO token for '%s': %w", ErrSsoSessionExpired, profileName, err)
 		}
 		return fmt.Errorf("could not refresh the SSO token: %w", err)
 	}
@@ -96,6 +100,23 @@ func RefreshSSOToken(profileName string) error {
 	}
 
 	return writeSSOTokenCache(path, fields)
+}
+
+// ssoRefreshNeedsLogin classifies rejected refresh requests consistently for
+// the SDK credential provider and the daemon. InvalidRequestException can also
+// be returned when refreshing a cached session after a day; it does not prove
+// expiry, but a new login replaces the cached authorization used by the request.
+// Network and service failures remain retryable without opening a browser.
+func ssoRefreshNeedsLogin(err error) bool {
+	var expired *types.ExpiredTokenException
+	var invalidGrant *types.InvalidGrantException
+	var invalidRequest *types.InvalidRequestException
+	if errors.As(err, &expired) || errors.As(err, &invalidGrant) || errors.As(err, &invalidRequest) {
+		return true
+	}
+	message := err.Error()
+	return strings.Contains(message, "InvalidGrantException") ||
+		strings.Contains(message, "InvalidRequestException")
 }
 
 // writeSSOTokenCache replaces the token file atomically, so an interrupted
