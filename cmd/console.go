@@ -179,7 +179,19 @@ func runConsole(cmd *cobra.Command, deps consoleDependencies) error {
 		}
 	}
 
-	resp, err := deps.postForm("https://signin.aws.amazon.com/federation", formData)
+	// The region decides the partition, and with it which sign-in service will
+	// recognise these credentials, so it is settled before the token is asked for.
+	region := os.Getenv("AWS_REGION")
+	if region == "" {
+		region, _ = aws.GetProfileRegion(currentProfile)
+	}
+	if region == "" {
+		region = "us-east-1"
+		tui.PrintWarning("No region found, defaulting to us-east-1")
+	}
+	federationURL := aws.ConsoleFederationURL(region)
+
+	resp, err := deps.postForm(federationURL, formData)
 	if err != nil {
 		return fmt.Errorf("failed to get sign-in token: %w", err)
 	}
@@ -220,16 +232,8 @@ func runConsole(cmd *cobra.Command, deps consoleDependencies) error {
 	if tokenResp.SigninToken == "" {
 		return fmt.Errorf("sign-in token not found in response. Response was: %s", string(body))
 	}
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		region, _ = aws.GetProfileRegion(currentProfile)
-	}
-	if region == "" {
-		region = "us-east-1"
-		tui.PrintWarning("No region found, defaulting to us-east-1")
-	}
-	destination := fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
-	loginURL := fmt.Sprintf("https://signin.aws.amazon.com/federation?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
+	destination := aws.ConsoleHomeURL(region)
+	loginURL := fmt.Sprintf("%s?Action=login&Issuer=awsm&Destination=%s&SigninToken=%s", federationURL, url.QueryEscape(destination), url.QueryEscape(tokenResp.SigninToken))
 
 	if noOpen {
 		fmt.Fprintln(cmd.OutOrStdout(), loginURL)

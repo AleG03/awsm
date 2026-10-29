@@ -232,6 +232,10 @@ awsm doctor --json
 # Add SSO session to config and automatically generate profiles
 awsm sso add my-session https://d-123456789.awsapps.com/start/ us-east-1
 
+# AWS European Sovereign Cloud: use the access portal URL from its
+# IAM Identity Center settings page and the sovereign region
+awsm sso add my-eu-session https://ssoins-1234567890abcdef.eusc-de-east-1.portal.amazonaws.eu eusc-de-east-1
+
 # Login and renew the active profile if it uses this session
 awsm sso login my-sso-session
 

@@ -161,6 +161,7 @@ func getRegionDescription(region string) string {
 		"me-south-1":     "Bahrain",
 		"me-central-1":   "UAE",
 		"sa-east-1":      "São Paulo",
+		"eusc-de-east-1": "EU Sovereign Cloud",
 	}
 
 	if desc, ok := descriptions[region]; ok {

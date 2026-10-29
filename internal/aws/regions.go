@@ -1,5 +1,10 @@
 package aws
 
+import (
+	"fmt"
+	"strings"
+)
+
 // AWSRegions contains all valid AWS regions
 var AWSRegions = map[string]bool{
 	"us-east-1":      true,
@@ -36,6 +41,37 @@ var AWSRegions = map[string]bool{
 	"me-south-1":     true,
 	"me-central-1":   true,
 	"sa-east-1":      true,
+	"eusc-de-east-1": true,
+}
+
+// euscRegionPrefix marks the regions of the AWS European Sovereign Cloud, the
+// aws-eusc partition.
+//
+// It is a separate cloud rather than another region: its own domains, its own
+// IAM Identity Center, and credentials that the commercial partition does not
+// recognise. Anything awsm addresses by URL instead of through the SDK has to
+// follow the partition, or it sends sovereign credentials to a commercial
+// endpoint that will only ever answer 400.
+const euscRegionPrefix = "eusc-"
+
+// ConsoleFederationURL is the endpoint that exchanges credentials for a console
+// sign-in token in the partition the region belongs to.
+//
+// The sovereign one is regional on purpose: signin.amazonaws-eusc.eu has no DNS
+// record, so a global host modelled on signin.aws.amazon.com cannot work.
+func ConsoleFederationURL(region string) string {
+	if strings.HasPrefix(region, euscRegionPrefix) {
+		return fmt.Sprintf("https://%s.signin.amazonaws-eusc.eu/federation", region)
+	}
+	return "https://signin.aws.amazon.com/federation"
+}
+
+// ConsoleHomeURL is the console landing page for a region.
+func ConsoleHomeURL(region string) string {
+	if strings.HasPrefix(region, euscRegionPrefix) {
+		return fmt.Sprintf("https://%s.console.amazonaws-eusc.eu/console/home?region=%s", region, region)
+	}
+	return fmt.Sprintf("https://%s.console.aws.amazon.com/console/home?region=%s", region, region)
 }
 
 // IsValidRegion checks if the given region is valid
