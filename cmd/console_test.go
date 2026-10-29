@@ -162,6 +162,40 @@ func TestConsoleUsesTheSameDestinationForSSOAndConsole(t *testing.T) {
 	}
 }
 
+func TestConsoleSignsInWithinTheSovereignPartition(t *testing.T) {
+	prepareConsoleTest(t)
+	t.Setenv("AWS_REGION", "eusc-de-east-1")
+	command := &cobra.Command{}
+	command.SetContext(t.Context())
+	var opened string
+	deps := consoleDependencies{
+		credentials: func(string, ...string) (*aws.TempCredentials, bool, error) {
+			return &aws.TempCredentials{AccessKeyId: "FAKE", SecretAccessKey: "fake", SessionToken: "fake", Expires: time.Now().Add(time.Hour)}, false, nil
+		},
+		openURL: func(target, _, _, _ string) error {
+			opened = target
+			return nil
+		},
+		postForm: func(endpoint string, form url.Values) (*http.Response, error) {
+			if endpoint != "https://eusc-de-east-1.signin.amazonaws-eusc.eu/federation" {
+				t.Fatalf("federation endpoint = %q", endpoint)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"SigninToken":"test-token"}`))}, nil
+		},
+	}
+	if err := runConsole(command, deps); err != nil {
+		t.Fatal(err)
+	}
+	consoleURL, err := url.Parse(opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consoleURL.Host != "eusc-de-east-1.signin.amazonaws-eusc.eu" ||
+		consoleURL.Query().Get("Destination") != "https://eusc-de-east-1.console.amazonaws-eusc.eu/console/home?region=eusc-de-east-1" {
+		t.Fatalf("console URL left the sovereign partition: %s", opened)
+	}
+}
+
 func TestConsoleCommand(t *testing.T) {
 	if consoleCmd.Use != "console" {
 		t.Errorf("Expected command use 'console', got %s", consoleCmd.Use)

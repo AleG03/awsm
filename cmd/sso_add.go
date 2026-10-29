@@ -20,7 +20,11 @@ This will add:
 [sso-session company]
 sso_start_url           = https://d-1234567a10.awsapps.com/start/
 sso_region              = eu-west-1
-sso_registration_scopes = sso:account:access`,
+sso_registration_scopes = sso:account:access
+
+The AWS European Sovereign Cloud works the same way, with the access portal
+URL from its IAM Identity Center settings page and its own region:
+  awsm sso add company-eu https://ssoins-1234567890abcdef.eusc-de-east-1.portal.amazonaws.eu eusc-de-east-1`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sessionName := args[0]
